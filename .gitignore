@@ -1,0 +1,35 @@
+# Build output
+bin/
+obj/
+
+# User-specific VS/Rider files
+.vs/
+*.user
+*.suo
+*.rsuser
+.idea/
+*.DotSettings.user
+
+# NuGet
+packages/
+*.nupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Publish output
+publish/
+**/Properties/PublishProfiles/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs & temp
+*.log
+*.tmp
+*.cache
+
+# Settings with API keys (stored in %APPDATA%, not repo)
+# TransIt saves to %APPDATA%\TransIt\settings.json — nothing to ignore here

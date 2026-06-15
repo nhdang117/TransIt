@@ -1,0 +1,99 @@
+<Window x:Class="TransIt.Windows.Settings.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TransIt Settings"
+        Width="480" Height="525"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="TransIt Settings" FontSize="18" FontWeight="Bold" Margin="0,0,0,12"/>
+
+        <StackPanel Grid.Row="1" x:Name="FormPanel">
+            <!-- Translation Provider -->
+            <TextBlock Text="Translation Provider" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <RadioButton x:Name="RbOpenAI" Content="OpenAI" GroupName="Provider"
+                             Checked="Provider_Checked" Margin="0,0,16,0"/>
+                <RadioButton x:Name="RbGoogle" Content="Google Translate" GroupName="Provider"
+                             Checked="Provider_Checked"/>
+            </StackPanel>
+
+            <!-- OpenAI settings -->
+            <StackPanel x:Name="OpenAiPanel">
+                <TextBlock Text="OpenAI API Key" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <PasswordBox x:Name="TbOpenAiKey" Margin="0,0,0,4"
+                             PasswordChanged="TbOpenAiKey_Changed"/>
+                <TextBlock Text="Model" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                <TextBox x:Name="TbModel" Margin="0,0,0,8"/>
+                <CheckBox x:Name="CbVisionApi"
+                          Content="Use Vision API (send image to model, skip OCR)"
+                          Margin="0,0,0,2"/>
+                <TextBlock Margin="20,0,0,12" Foreground="#888" FontSize="11" TextWrapping="Wrap"
+                           Text="Model reads &amp; translates directly from screenshot. In Overlay mode, OCR provides bounding boxes and Vision AI provides translations. Requires vision-capable model (gpt-4o, gpt-4o-mini)."/>
+            </StackPanel>
+
+            <!-- Google settings -->
+            <StackPanel x:Name="GooglePanel" Visibility="Collapsed">
+                <TextBlock Text="Google API Key" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <PasswordBox x:Name="TbGoogleKey" Margin="0,0,0,12"
+                             PasswordChanged="TbGoogleKey_Changed"/>
+            </StackPanel>
+
+            <!-- Languages -->
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="32"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Source Language" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBox x:Name="TbSourceLang"/>
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="→" VerticalAlignment="Bottom"
+                           HorizontalAlignment="Center" Margin="0,0,0,4" FontSize="16"/>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Target Language" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBox x:Name="TbTargetLang"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Realtime interval -->
+            <TextBlock Text="Realtime Interval (ms)" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal">
+                <Slider x:Name="SlInterval" Minimum="500" Maximum="5000" TickFrequency="500"
+                        IsSnapToTickEnabled="True" Width="300"
+                        ValueChanged="SlInterval_ValueChanged"/>
+                <TextBlock x:Name="LblInterval" Margin="8,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+
+
+            <!-- Region Display Mode -->
+            <TextBlock Text="Region Result Display" FontWeight="SemiBold" Margin="0,12,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <RadioButton x:Name="RbOverlayMode" Content="Overlay" GroupName="RegionMode"
+                             Margin="0,0,16,0"/>
+                <RadioButton x:Name="RbTextPaneMode" Content="Text Pane" GroupName="RegionMode"/>
+            </StackPanel>
+            <TextBlock Margin="0,0,0,4" Foreground="#888"
+                       Text="Overlay: translates over frozen screenshot   Text Pane: floating translation panel"/>
+
+            <TextBlock Margin="0,4,0,0" Foreground="#888"
+                       Text="Hotkeys: Alt+2 (Full snapshot)  •  Ctrl+2 (Region)  •  Alt+3 (Realtime)"/>
+        </StackPanel>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" Click="BtnCancel_Click" Width="80" Margin="0,0,8,0"/>
+            <Button Content="Save"   Click="BtnSave_Click"   Width="80"
+                    Background="#0078D4" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

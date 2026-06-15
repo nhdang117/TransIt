@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TransIt — Architecture Diagrams</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2e3148;
+    --accent: #6c8ef5;
+    --accent2: #56d4a0;
+    --accent3: #f5a623;
+    --accent4: #e05f7e;
+    --text: #e2e4f0;
+    --muted: #7b7f9e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #1a1d27 0%, #0d1b3e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 36px 48px 28px;
+  }
+  header h1 { font-size: 2rem; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; }
+  header p { color: var(--muted); margin-top: 6px; font-size: 0.95rem; }
+  nav {
+    display: flex;
+    gap: 8px;
+    padding: 16px 48px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+    flex-wrap: wrap;
+  }
+  nav a {
+    color: var(--muted);
+    text-decoration: none;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+  }
+  nav a:hover { color: var(--text); border-color: var(--border); background: var(--bg); }
+  nav a.active { color: var(--accent); border-color: var(--accent); background: #1a2240; }
+  main { padding: 48px; max-width: 1400px; margin: 0 auto; }
+  .section { margin-bottom: 72px; scroll-margin-top: 80px; }
+  .section-header { margin-bottom: 28px; }
+  .section-header h2 { font-size: 1.5rem; font-weight: 700; display: flex; align-items: center; gap: 12px; }
+  .badge {
+    font-size: 0.7rem; font-weight: 600; padding: 3px 10px; border-radius: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .badge-uc  { background: #1e2f5c; color: var(--accent); }
+  .badge-act { background: #1a3530; color: var(--accent2); }
+  .badge-seq { background: #3a2510; color: var(--accent3); }
+  .badge-cls { background: #3a1020; color: var(--accent4); }
+  .section-header p { color: var(--muted); margin-top: 8px; font-size: 0.9rem; }
+  .diagram-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  /* ── Zoom / Pan ───────────────────────────── */
+  .diagram-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .diagram-hint { font-size: 0.75rem; color: var(--muted); }
+  .zoom-controls { display: flex; gap: 4px; }
+  .zoom-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    padding: 0; line-height: 1;
+    font-family: inherit;
+  }
+  .zoom-btn:hover { background: #1a2240; border-color: var(--accent); color: var(--accent); }
+  .diagram-viewport {
+    overflow: hidden;
+    cursor: grab;
+    background: #13151f;
+    height: 520px;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .diagram-viewport.h640  { height: 640px; }
+  .diagram-viewport.h760  { height: 760px; }
+  .diagram-viewport.h900  { height: 900px; }
+  .diagram-pan-layer {
+    transform-origin: 0 0;
+    display: block;
+    padding: 28px;
+  }
+
+  .legend {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--muted); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TransIt — Architecture Diagrams</h1>
+  <p>C# .NET 8 WPF · Windows Screen Translation · System Architecture Overview</p>
+</header>
+
+<nav>
+  <a href="#usecase" class="active">Use Case</a>
+  <a href="#activity">Activity</a>
+  <a href="#sequence">Sequence</a>
+  <a href="#class">Class</a>
+</nav>
+
+<main>
+
+<!-- ══════════════════════════════════════════════
+     USE CASE
+═══════════════════════════════════════════════ -->
+<section class="section" id="usecase">
+  <div class="section-header">
+    <h2><span class="badge badge-uc">Business</span> Use Case Diagram</h2>
+    <p>Ai dùng hệ thống và họ làm gì — actors, goals, relationships</p>
+  </div>
+  <div class="diagram-card">
+    <div class="diagram-toolbar">
+      <span class="diagram-hint">Scroll to zoom · Drag to pan · Double-click to reset</span>
+      <div class="zoom-controls">
+        <button class="zoom-btn" data-action="in"    title="Zoom in">＋</button>
+        <button class="zoom-btn" data-action="out"   title="Zoom out">－</button>
+        <button class="zoom-btn" data-action="reset" title="Reset view">⊙</button>
+      </div>
+    </div>
+    <div class="diagram-viewport">
+      <div class="diagram-pan-layer">
+        <div class="mermaid">
+flowchart LR
+  subgraph ACTORS["👤 Actors"]
+    U["🧑‍💻 User"]
+    OS["🖥️ Windows OS"]
+    EXT["☁️ External API"]
+  end
+
+  subgraph SYS["⬛ TransIt System"]
+    direction TB
+    UC1["🖼️ Snapshot Translate\n(Alt+2)"]
+    UC2["✏️ Region Translate\n(Ctrl+2)"]
+    UC3["🔄 Realtime Translate\n(Alt+3)"]
+    UC4["📝 Annotate Overlay\n(Double-click / Ctrl+A)"]
+    UC5["💾 Export to PNG\n/ Copy to Clipboard"]
+    UC6["⚙️ Configure Settings\n(API key, language, interval)"]
+    UC7["🔔 View Notification\n(tray balloon)"]
+
+    UCR1["🔍 OCR — Detect Text"]
+    UCR2["🌐 Translate Text"]
+    UCR3["🎨 Smart Overlay\n(match color + font)"]
+    UCR4["🔁 Change Detection\n(perceptual hash)"]
+  end
+
+  U -->|"presses hotkey"| UC1
+  U -->|"presses hotkey"| UC2
+  U -->|"presses hotkey"| UC3
+  U -->|"double-click overlay"| UC4
+  U -->|"toolbar button"| UC5
+  U -->|"tray menu"| UC6
+  U -->|"passive"| UC7
+
+  UC1 --> UCR1
+  UC2 --> UCR1
+  UC3 --> UCR1
+  UC3 --> UCR4
+
+  UCR1 --> UCR2
+  UCR2 --> UCR3
+
+  OS -->|"WinEvent foreground change"| UC3
+  OS -->|"WM_HOTKEY messages"| UC1
+  OS -->|"WM_HOTKEY messages"| UC2
+  OS -->|"WM_HOTKEY messages"| UC3
+
+  EXT -->|"OpenAI / Google Translate"| UCR2
+
+  style UC1 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UC2 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UC3 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UC4 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UC5 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UC6 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UC7 fill:#1e2f5c,stroke:#6c8ef5,color:#e2e4f0
+  style UCR1 fill:#0d2020,stroke:#56d4a0,color:#e2e4f0
+  style UCR2 fill:#0d2020,stroke:#56d4a0,color:#e2e4f0
+  style UCR3 fill:#0d2020,stroke:#56d4a0,color:#e2e4f0
+  style UCR4 fill:#0d2020,stroke:#56d4a0,color:#e2e4f0
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#6c8ef5"></div>Primary Use Cases</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#56d4a0"></div>System Functions (included)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f5a623"></div>External Actors</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════
+     ACTIVITY
+═══════════════════════════════════════════════ -->
+<section class="section" id="activity">
+  <div class="section-header">
+    <h2><span class="badge badge-act">Logic</span> Activity Diagram</h2>
+    <p>Quy trình chạy ra sao — ba luồng song song: Snapshot, Region, Realtime</p>
+  </div>
+  <div class="diagram-card">
+    <div class="diagram-toolbar">
+      <span class="diagram-hint">Scroll to zoom · Drag to pan · Double-click to reset</span>
+      <div class="zoom-controls">
+        <button class="zoom-btn" data-action="in"    title="Zoom in">＋</button>
+        <button class="zoom-btn" data-action="out"   title="Zoom out">－</button>
+        <button class="zoom-btn" data-action="reset" title="Reset view">⊙</button>
+      </div>
+    </div>
+    <div class="diagram-viewport h900">
+      <div class="diagram-pan-layer">
+        <div class="mermaid">
+flowchart TD
+  START(["▶ App Startup"]) --> LOAD["Load AppSettings\nJSON from APPDATA"]
+  LOAD --> APICHECK{API key\nconfigured?}
+  APICHECK -- No --> SETTINGS["Open SettingsWindow"]
+  SETTINGS --> APICHECK
+  APICHECK -- Yes --> TRAY["Init System Tray\nRegister Hotkeys\nAlt+2 · Ctrl+2 · Alt+3"]
+
+  TRAY --> IDLE(["⏳ Idle — waiting for hotkey or tray click"])
+
+  IDLE --> |Alt+2| SN_START
+  IDLE --> |Ctrl+2| RG_START
+  IDLE --> |Alt+3| RT_START
+
+  subgraph SNAPSHOT ["🖼️ Snapshot Mode"]
+    SN_START(["Begin"]) --> SN_HIDE["Hide overlay\n150ms delay"]
+    SN_HIDE --> SN_CAP["CaptureFullScreen\nGDI+ physical pixels"]
+    SN_CAP --> SN_OCR["OcrService.RecognizeAsync\nOcrLine list in DIPs"]
+    SN_OCR --> SN_CHK{Lines\nfound?}
+    SN_CHK -- No --> SN_END(["End"])
+    SN_CHK -- Yes --> SN_GRP["OcrBlock.GroupLines\ngap below 1.5x avgHeight"]
+    SN_GRP --> SN_TR["TranslationService\nBatch JSON array — 1 API call"]
+    SN_TR --> SN_BUILD["OverlayTextItem.Build\nSample bg/fg · Estimate font"]
+    SN_BUILD --> SN_SHOW["OverlayWindow.ShowOverlay\nRender TextBlocks on Canvas"]
+    SN_SHOW --> SN_WAIT{User\naction?}
+    SN_WAIT -- "Esc / Close" --> SN_END
+    SN_WAIT -- "Dbl-click / Ctrl+A" --> SN_ANNO["EnterAnnotationMode\nInkCanvas ON · Toolbar visible"]
+    SN_ANNO --> SN_INK{Annotation\naction?}
+    SN_INK -- "Export PNG" --> SN_EXP["ExportService.SaveToPng"]
+    SN_INK -- "Copy" --> SN_COPY["ExportService.CopyToClipboard"]
+    SN_INK -- "Esc" --> SN_END
+    SN_EXP --> SN_END
+    SN_COPY --> SN_END
+  end
+
+  subgraph REGION ["✏️ Region Mode"]
+    RG_START(["Begin"]) --> RG_SEL["Show RegionSelectWindow\nFull-screen dim · Rubber-band rect"]
+    RG_SEL --> RG_CHK{Cancelled?}
+    RG_CHK -- Yes --> RG_END(["End"])
+    RG_CHK -- No --> RG_CAP["CaptureRegion\nLogical x dpiScale = physical px"]
+    RG_CAP --> RG_OCR["OcrService.RecognizeAsync"]
+    RG_OCR --> RG_OFF["Offset BoundingRects\nby region origin"]
+    RG_OFF --> RG_SAME["GroupLines → Translate → Build → Show"]
+    RG_SAME --> RG_END
+  end
+
+  subgraph REALTIME ["🔄 Realtime Mode"]
+    RT_START(["Toggle ON"]) --> RT_WIN["SetWinEventHook\nEVENT_SYSTEM_FOREGROUND"]
+    RT_WIN --> RT_TIMER["PeriodicTimer\ndefault 2000ms interval"]
+    RT_TIMER --> RT_TICK{Next tick?}
+    RT_TICK -- "busy — skip" --> RT_TIMER
+    RT_TICK -- proceed --> RT_CAP["CaptureFullScreen"]
+    RT_CAP --> RT_HASH{ChangeDetector\nHamming dist below 5?}
+    RT_HASH -- "no change" --> RT_TIMER
+    RT_HASH -- changed --> RT_OCR["OcrService + GroupLines\n+ Translate + Build"]
+    RT_OCR --> RT_SHOW["OverlayWindow.ShowOverlay"]
+    RT_SHOW --> RT_TIMER
+    RT_WIN2["WinEvent: app switched\nforceNext = true"] --> RT_TICK
+    RT_TIMER --> RT_OFF{Alt+3\nagain?}
+    RT_OFF -- Yes --> RT_CANCEL["Cancel token\nStop hook + timer\nHide overlay"]
+    RT_CANCEL --> RT_END(["Toggle OFF"])
+  end
+
+  SN_END --> IDLE
+  RG_END --> IDLE
+  RT_END --> IDLE
+
+  style SNAPSHOT fill:#0d1525,stroke:#6c8ef5
+  style REGION  fill:#0d1525,stroke:#56d4a0
+  style REALTIME fill:#0d1525,stroke:#f5a623
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#6c8ef5"></div>Snapshot Mode (Alt+2)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#56d4a0"></div>Region Mode (Ctrl+2)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f5a623"></div>Realtime Mode (Alt+3)</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════
+     SEQUENCE
+═══════════════════════════════════════════════ -->
+<section class="section" id="sequence">
+  <div class="section-header">
+    <h2><span class="badge badge-seq">Runtime</span> Sequence Diagram</h2>
+    <p>Thành phần gọi nhau thế nào — Alt+2 Snapshot flow đầy đủ (chi tiết nhất)</p>
+  </div>
+  <div class="diagram-card">
+    <div class="diagram-toolbar">
+      <span class="diagram-hint">Scroll to zoom · Drag to pan · Double-click to reset</span>
+      <div class="zoom-controls">
+        <button class="zoom-btn" data-action="in"    title="Zoom in">＋</button>
+        <button class="zoom-btn" data-action="out"   title="Zoom out">－</button>
+        <button class="zoom-btn" data-action="reset" title="Reset view">⊙</button>
+      </div>
+    </div>
+    <div class="diagram-viewport h760">
+      <div class="diagram-pan-layer">
+        <div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor User
+  participant OS as Windows OS
+  participant HK as HotkeyManager
+  participant App as App.xaml.cs
+  participant SM as SnapshotMode
+  participant SC as ScreenCaptureService
+  participant OCR as OcrService
+  participant WinOCR as WinRT OcrEngine
+  participant OB as OcrBlock
+  participant TS as TranslationService
+  participant API as OpenAI / Google API
+  participant OTI as OverlayTextItem
+  participant CS as ColorSampler
+  participant OW as OverlayWindow
+  participant OC as OverlayCanvas
+
+  User->>OS: Press Alt+2
+  OS->>HK: WM_HOTKEY (id=1)
+  HK->>App: HotkeyPressed event (ID_SNAPSHOT)
+  App->>App: Task.Run → SnapshotMode.ActivateAsync()
+
+  App->>OW: Hide() — clear screen before capture
+  Note over App,OW: Await 150ms delay
+
+  App->>SC: CaptureFullScreen()
+  SC-->>App: Bitmap (physical pixels)
+
+  App->>OCR: RecognizeAsync(bitmap, "en")
+  OCR->>OCR: LockBits + Marshal.Copy → byte[]
+  OCR->>WinOCR: new SoftwareBitmap + CopyFromBuffer()
+  OCR->>WinOCR: engine.RecognizeAsync(swBitmap)
+  WinOCR-->>OCR: OcrResult.Lines (BoundingRect in DIPs)
+  OCR->>OCR: Map WinRT lines to AppOcrLine list
+  OCR-->>App: List of OcrLine
+
+  App->>OB: GroupLines(lines)
+  Note over OB: Sort by Y, gap below 1.5x avgHeight = same block
+  OB-->>App: List of OcrBlock
+
+  App->>TS: TranslateAsync(texts[], "en", "vi")
+  TS->>TS: Serialize texts as JSON array
+  TS->>API: POST /v1/chat/completions {model, messages}
+  API-->>TS: JSON response with translated array
+  TS->>TS: ParseJsonArray() strip code fences
+  TS-->>App: translated strings
+
+  loop For each OcrBlock
+    App->>OTI: Build(block, translated[i], bitmap, dpiScale)
+    OTI->>OTI: logicalRect × dpiScale → physRect
+    OTI->>CS: SampleBackground(bitmap, physRect)
+    CS->>CS: Sample border strip, average RGB
+    CS-->>OTI: bgColor
+    OTI->>CS: SampleForeground(bitmap, physRect, bgColor)
+    CS->>CS: Find pixels with ColorDistance over 80 from bg
+    CS-->>OTI: fgColor
+    OTI->>OTI: FontSizeEstimator.Estimate(height × 0.72)
+    OTI-->>App: OverlayTextItem {ScreenRect, FontSize, FgColor, BgColor}
+  end
+
+  App->>OW: ShowOverlay(items) [on UI thread via Dispatcher]
+  OW->>OW: PositionOnVirtualScreen()
+  OW->>OC: RenderItems(items)
+  loop For each item
+    OC->>OC: new Border(BgColor) + TextBlock(FgColor, FontSize)
+    OC->>OC: Canvas.SetLeft/Top(ScreenRect.X/Y)
+    OC->>OC: Shrink FontSize until fits ScreenRect.Height
+  end
+  OW->>OW: SetClickThrough(true) — WS_EX_TRANSPARENT
+  OW->>OW: Show()
+
+  User->>OW: Double-click overlay
+  OW->>OW: EnterAnnotationMode()
+  OW->>OW: SetClickThrough(false) — remove WS_EX_TRANSPARENT
+  OW->>OC: ShowAnnotationToolbar(true)
+  Note over OC: InkCanvas.IsHitTestVisible = true
+
+  User->>OC: Draw strokes with pen
+  User->>OC: Click Export
+  OC->>OC: ExportService.SaveToPng(this, filePath)
+  Note over OC: RenderTargetBitmap → PngBitmapEncoder
+
+  User->>OW: Press Escape
+  OW->>OW: HideOverlay()
+  OC->>OC: ClearInk()
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#6c8ef5"></div>UI / App layer</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#56d4a0"></div>Core services</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f5a623"></div>WinRT / External</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#e05f7e"></div>Overlay rendering</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════
+     CLASS
+═══════════════════════════════════════════════ -->
+<section class="section" id="class">
+  <div class="section-header">
+    <h2><span class="badge badge-cls">Structure</span> Class Diagram</h2>
+    <p>Hệ thống được xây thế nào — quan hệ giữa các class, interface, dependency</p>
+  </div>
+  <div class="diagram-card">
+    <div class="diagram-toolbar">
+      <span class="diagram-hint">Scroll to zoom · Drag to pan · Double-click to reset</span>
+      <div class="zoom-controls">
+        <button class="zoom-btn" data-action="in"    title="Zoom in">＋</button>
+        <button class="zoom-btn" data-action="out"   title="Zoom out">－</button>
+        <button class="zoom-btn" data-action="reset" title="Reset view">⊙</button>
+      </div>
+    </div>
+    <div class="diagram-viewport h760">
+      <div class="diagram-pan-layer">
+        <div class="mermaid">
+classDiagram
+  direction TB
+
+  class App {
+    -AppSettings _settings
+    -HotkeyManager _hotkeys
+    -TrayIconManager _tray
+    -OverlayWindow _overlay
+    -OcrService _ocr
+    -TranslationService _translator
+    -SnapshotMode _snapshotMode
+    -RegionMode _regionMode
+    -RealtimeMode _realtimeMode
+    -CancellationTokenSource _realtimeCts
+    +OnStartup()
+    +OnExit()
+    -ToggleRealtime()
+    -OpenSettings()
+    -CheckApiKey() bool
+  }
+
+  class ITranslationMode {
+    &lt;&lt;interface&gt;&gt;
+    +ActivateAsync(ct) Task
+    +Deactivate()
+  }
+
+  class SnapshotMode {
+    -OcrService _ocr
+    -TranslationService _translator
+    -AppSettings _settings
+    -OverlayWindow _overlay
+    +ActivateAsync(ct) Task
+    +Deactivate()
+  }
+
+  class RegionMode {
+    -OcrService _ocr
+    -TranslationService _translator
+    -AppSettings _settings
+    -OverlayWindow _overlay
+    +ActivateAsync(ct) Task
+    +Deactivate()
+  }
+
+  class RealtimeMode {
+    -OcrService _ocr
+    -TranslationService _translator
+    -AppSettings _settings
+    -OverlayWindow _overlay
+    -WinEventHook _winEventHook
+    -ChangeDetector _changeDetector
+    -PeriodicTimer _timer
+    -bool _isProcessing
+    -bool _forceNext
+    +ActivateAsync(ct) Task
+    +Deactivate()
+    -RunPipelineAsync(ct) Task
+    -OnAppSwitched()
+  }
+
+  class AppSettings {
+    +string OpenAiApiKey
+    +string GoogleApiKey
+    +TranslationProvider Provider
+    +string OpenAiModel
+    +string SourceLanguage
+    +string TargetLanguage
+    +int RealtimeIntervalMs
+    +bool HasValidApiKey
+    +Save()
+    +Load()$ AppSettings
+  }
+
+  class HotkeyManager {
+    +int ID_SNAPSHOT
+    +int ID_REGION
+    +int ID_REALTIME
+    -HwndSource _source
+    -List~int~ _registeredIds
+    +Initialize()
+    +Register(id, mod, vk) bool
+    +UnregisterAll()
+    +Dispose()
+    +HotkeyPressed EventHandler
+  }
+
+  class OcrService {
+    +RecognizeAsync(bitmap, lang, ct) Task
+    +GetInstalledLanguageTags()$ List
+    -ConvertToSoftwareBitmap(bitmap) SoftwareBitmap
+    -UnionRects(rects) Rect
+  }
+
+  class TranslationService {
+    -HttpClient _http
+    -AppSettings _settings
+    +TranslateAsync(texts, src, tgt, ct) Task
+    -TranslateOpenAiAsync() Task
+    -TranslateGoogleAsync() Task
+    -ParseJsonArray(content, count)$ List
+  }
+
+  class ScreenCaptureService {
+    +CaptureFullScreen()$ Bitmap
+    +CaptureRegion(physRect)$ Bitmap
+  }
+
+  class WinEventHook {
+    -WinEventDelegate _delegate
+    -IntPtr _hook
+    +Start()
+    +Stop()
+    +AppSwitched EventHandler
+  }
+
+  class OcrWord {
+    +string Text
+    +Rect BoundingRect
+  }
+
+  class OcrLine {
+    +List~OcrWord~ Lines
+    +string FullText
+    +Rect BoundingRect
+  }
+
+  class OcrBlock {
+    +List~OcrLine~ Lines
+    +string FullText
+    +Rect BoundingRect
+    +GroupLines(lines)$ List
+  }
+
+  class OverlayTextItem {
+    +string TranslatedText
+    +Rect ScreenRect
+    +double FontSize
+    +Color ForegroundColor
+    +Color BackgroundColor
+    +Build(block, text, bitmap, dpi)$ OverlayTextItem
+  }
+
+  class ColorSampler {
+    +SampleBackground(bmp, rect)$ Color
+    +SampleForeground(bmp, rect, bg)$ Color
+  }
+
+  class FontSizeEstimator {
+    +Estimate(heightLogical)$ double
+  }
+
+  class ChangeDetector {
+    -ulong _lastHash
+    +ComputeHash(bitmap)$ ulong
+    +HasChanged(bitmap, threshold) bool
+    +Reset()
+  }
+
+  class ExportService {
+    +SaveToPng(element, filePath)$
+    +CopyToClipboard(element)$
+  }
+
+  class OverlayWindow {
+    -IntPtr _hwnd
+    -bool _annotationMode
+    +ShowOverlay(items)
+    +HideOverlay()
+    +EnterAnnotationMode()
+    +SetClickThrough(enabled)
+    +EscapePressed EventHandler
+  }
+
+  class OverlayCanvas {
+    -Color _penColor
+    +RenderItems(items)
+    +ShowAnnotationToolbar(show)
+    +ClearInk()
+    +CloseRequested EventHandler
+  }
+
+  class RegionSelectWindow {
+    +Rectangle SelectedRect
+    +bool Cancelled
+  }
+
+  class TrayIconManager {
+    -TaskbarIcon _icon
+    +Initialize()
+    +ShowBalloon(title, msg, icon)
+    +Dispose()
+    +SnapshotRequested EventHandler
+    +RegionRequested EventHandler
+    +RealtimeToggleRequested EventHandler
+    +SettingsRequested EventHandler
+  }
+
+  class NativeMethods {
+    +RegisterHotKey()$
+    +UnregisterHotKey()$
+    +GetWindowLong()$
+    +SetWindowLong()$
+    +SetWinEventHook()$
+    +UnhookWinEvent()$
+    +GetDpiForWindow()$
+  }
+
+  class DpiHelper {
+    +GetDpiScaleForHwnd(hwnd)$ double
+    +LogicalToPhysical(pt, scale)$
+    +PhysicalToLogical(pt, scale)$
+  }
+
+  class TranslationProvider {
+    &lt;&lt;enumeration&gt;&gt;
+    OpenAI
+    Google
+  }
+
+  SnapshotMode ..|> ITranslationMode : implements
+  RegionMode   ..|> ITranslationMode : implements
+  RealtimeMode ..|> ITranslationMode : implements
+
+  App *-- SnapshotMode        : owns
+  App *-- RegionMode          : owns
+  App *-- RealtimeMode        : owns
+  App *-- HotkeyManager       : owns
+  App *-- TrayIconManager     : owns
+  App *-- OverlayWindow       : owns
+  App *-- OcrService          : owns
+  App *-- TranslationService  : owns
+  App *-- AppSettings         : owns
+
+  SnapshotMode --> OcrService           : uses
+  SnapshotMode --> TranslationService   : uses
+  SnapshotMode --> OverlayWindow        : uses
+  SnapshotMode --> AppSettings          : reads
+  SnapshotMode --> ScreenCaptureService : calls
+
+  RegionMode --> OcrService             : uses
+  RegionMode --> TranslationService     : uses
+  RegionMode --> OverlayWindow          : uses
+  RegionMode --> AppSettings            : reads
+  RegionMode --> RegionSelectWindow     : creates
+
+  RealtimeMode --> OcrService           : uses
+  RealtimeMode --> TranslationService   : uses
+  RealtimeMode --> OverlayWindow        : uses
+  RealtimeMode --> AppSettings          : reads
+  RealtimeMode *-- WinEventHook         : owns
+  RealtimeMode *-- ChangeDetector       : owns
+
+  OverlayWindow *-- OverlayCanvas       : contains
+  OverlayCanvas --> ExportService       : calls
+
+  OverlayTextItem --> ColorSampler      : calls
+  OverlayTextItem --> FontSizeEstimator : calls
+  OverlayTextItem --> OcrBlock          : built from
+
+  OcrBlock *-- OcrLine  : contains
+  OcrLine  *-- OcrWord  : contains
+
+  AppSettings --> TranslationProvider   : has
+
+  HotkeyManager --> NativeMethods       : calls
+  OverlayWindow --> NativeMethods       : calls
+  WinEventHook  --> NativeMethods       : calls
+  OcrService    --> ScreenCaptureService : dependency
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#6c8ef5"></div>App / Entry Point</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#56d4a0"></div>Modes (Strategy pattern)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f5a623"></div>Core Services</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#e05f7e"></div>Windows / UI</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#7b7f9e"></div>Infrastructure / P/Invoke</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    themeVariables: {
+      background: '#13151f',
+      primaryColor: '#1e2f5c',
+      primaryTextColor: '#e2e4f0',
+      primaryBorderColor: '#6c8ef5',
+      lineColor: '#7b7f9e',
+      secondaryColor: '#1a3530',
+      tertiaryColor: '#3a2510',
+      edgeLabelBackground: '#1a1d27',
+      clusterBkg: '#0d1117',
+      clusterBorder: '#2e3148',
+      titleColor: '#e2e4f0',
+      actorBkg: '#1e2f5c',
+      actorBorder: '#6c8ef5',
+      actorTextColor: '#e2e4f0',
+      actorLineColor: '#7b7f9e',
+      signalColor: '#e2e4f0',
+      signalTextColor: '#e2e4f0',
+      labelBoxBkgColor: '#1a1d27',
+      labelBoxBorderColor: '#2e3148',
+      labelTextColor: '#e2e4f0',
+      loopTextColor: '#e2e4f0',
+      noteBkgColor: '#3a2510',
+      noteTextColor: '#f5a623',
+      noteBorderColor: '#f5a623',
+      activationBkgColor: '#1e2f5c',
+      activationBorderColor: '#6c8ef5',
+      sequenceNumberColor: '#0f1117',
+      fontSize: '14px'
+    },
+    flowchart: { curve: 'basis', useMaxWidth: true },
+    sequence:  { useMaxWidth: true, actorMargin: 60, messageMargin: 35 },
+    classDiagram: { useMaxWidth: true }
+  });
+
+  // ── Zoom / Pan ────────────────────────────────────────────────
+  function initZoomPan(viewport) {
+    const layer = viewport.querySelector('.diagram-pan-layer');
+    let scale = 1, tx = 0, ty = 0;
+    let dragging = false, ox = 0, oy = 0;
+
+    function apply(animate) {
+      if (animate) {
+        layer.style.transition = 'transform 0.22s ease';
+        setTimeout(() => { layer.style.transition = ''; }, 240);
+      }
+      layer.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+    }
+
+    // Wheel zoom — centers on cursor position
+    viewport.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var rect = viewport.getBoundingClientRect();
+      var mx = e.clientX - rect.left;
+      var my = e.clientY - rect.top;
+      var factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      var ns = Math.max(0.08, Math.min(10, scale * factor));
+      tx = mx - (mx - tx) * (ns / scale);
+      ty = my - (my - ty) * (ns / scale);
+      scale = ns;
+      apply(false);
+    }, { passive: false });
+
+    // Drag to pan
+    viewport.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      dragging = true;
+      ox = e.clientX - tx;
+      oy = e.clientY - ty;
+      viewport.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      tx = e.clientX - ox;
+      ty = e.clientY - oy;
+      apply(false);
+    });
+
+    window.addEventListener('mouseup', function() {
+      if (!dragging) return;
+      dragging = false;
+      viewport.style.cursor = 'grab';
+    });
+
+    // Double-click reset
+    viewport.addEventListener('dblclick', function() {
+      scale = 1; tx = 0; ty = 0;
+      apply(true);
+    });
+
+    // Toolbar buttons
+    viewport.closest('.diagram-card').querySelectorAll('.zoom-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var a = btn.dataset.action;
+        if      (a === 'in')    scale = Math.min(10, scale * 1.35);
+        else if (a === 'out')   scale = Math.max(0.08, scale / 1.35);
+        else                  { scale = 1; tx = 0; ty = 0; }
+        apply(true);
+      });
+    });
+  }
+
+  // Render each diagram individually so errors show inline
+  window.addEventListener('load', async function() {
+    var diagrams = document.querySelectorAll('.diagram-pan-layer .mermaid');
+    for (var i = 0; i < diagrams.length; i++) {
+      var el = diagrams[i];
+      try {
+        await mermaid.run({ nodes: [el] });
+      } catch(err) {
+        var msg = String(err && err.message ? err.message : err).replace(/</g, '&lt;');
+        el.innerHTML = '<pre style="color:#ff6b6b;background:#1a0010;border:1px solid #ff6b6b;border-radius:6px;padding:16px;font-size:11px;white-space:pre-wrap;margin:0">Parse error:\n' + msg + '</pre>';
+      }
+    }
+    document.querySelectorAll('.diagram-viewport').forEach(initZoomPan);
+  });
+
+  // ── Nav active highlight on scroll ───────────────────────────
+  var sections = document.querySelectorAll('.section');
+  var navLinks = document.querySelectorAll('nav a');
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) {
+      if (e.isIntersecting) {
+        navLinks.forEach(function(a) { a.classList.remove('active'); });
+        var link = document.querySelector('nav a[href="#' + e.target.id + '"]');
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+  sections.forEach(function(s) { observer.observe(s); });
+</script>
+</body>
+</html>

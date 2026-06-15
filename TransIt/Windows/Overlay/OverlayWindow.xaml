@@ -1,0 +1,14 @@
+<Window x:Class="TransIt.Windows.Overlay.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TransIt.Windows.Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        Title="TransIt Overlay">
+    <Grid>
+        <local:OverlayCanvas x:Name="Canvas" />
+    </Grid>
+</Window>
