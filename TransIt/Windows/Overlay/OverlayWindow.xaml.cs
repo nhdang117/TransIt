@@ -42,7 +42,7 @@ public partial class OverlayWindow : Window
     public void ShowOverlay(IList<OverlayTextItem> items)
     {
         PositionOnVirtualScreen();
-        Canvas.SetFrozenBackground(null);       // reset scale transform from any previous frozen mode
+        Canvas.SetFrozenBackground(null);
         Canvas.RenderItems(items);
         Canvas.ShowAnnotationToolbar(false);
         _annotationMode = false;
@@ -53,7 +53,7 @@ public partial class OverlayWindow : Window
     public void ShowFrozenOverlay(IList<OverlayTextItem> items, BitmapSource background)
     {
         PositionOnVirtualScreen();
-        Canvas.SetFrozenBackground(background, Width, Height);
+        Canvas.SetFrozenBackground(background);
         Canvas.RenderItems(items);
         Canvas.ShowAnnotationToolbar(false);
         _annotationMode = false;
@@ -66,7 +66,7 @@ public partial class OverlayWindow : Window
     public void ShowLoadingOverlay(BitmapSource background)
     {
         PositionOnVirtualScreen();
-        Canvas.SetFrozenBackground(background, Width, Height);
+        Canvas.SetFrozenBackground(background);
         Canvas.RenderItems([]);
         Canvas.ShowAnnotationToolbar(false);
         Canvas.ShowLoading(true);

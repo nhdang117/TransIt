@@ -69,12 +69,14 @@ public class RegionMode : ITranslationMode
 
         try
         {
-            // Convert physRect (physical pixels) to DIP-space bitmap coords.
-            // fullBitmap is DIP-sized (96 DPI, 1 px = 1 DIP), so all offsets must be in DIPs.
-            int bx = Math.Max(0, (int)(physRect.X / dpiScale - SystemParameters.VirtualScreenLeft));
-            int by = Math.Max(0, (int)(physRect.Y / dpiScale - SystemParameters.VirtualScreenTop));
-            int bw = Math.Max(1, Math.Min((int)(physRect.Width  / dpiScale), fullBitmap.Width  - bx));
-            int bh = Math.Max(1, Math.Min((int)(physRect.Height / dpiScale), fullBitmap.Height - by));
+            // fullBitmap is captured in physical pixels; physRect is also in physical pixels.
+            // Offset into the bitmap = physRect origin minus the virtual screen's physical origin.
+            int physLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+            int physTop  = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+            int bx = Math.Max(0, physRect.X - physLeft);
+            int by = Math.Max(0, physRect.Y - physTop);
+            int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
+            int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
 
             using var regionBitmap = fullBitmap.Clone(new Rectangle(bx, by, bw, bh), fullBitmap.PixelFormat);
 
@@ -101,7 +103,7 @@ public class RegionMode : ITranslationMode
             for (int i = 0; i < blocks.Count; i++)
             {
                 var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
-                items.Add(OverlayTextItem.Build(blocks[i], text, fullBitmap));
+                items.Add(OverlayTextItem.Build(blocks[i], text, fullBitmap, dpiScale));
             }
 
             Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
@@ -161,10 +163,12 @@ public class RegionMode : ITranslationMode
 
         try
         {
-            int bx = Math.Max(0, (int)(physRect.X / dpiScale - SystemParameters.VirtualScreenLeft));
-            int by = Math.Max(0, (int)(physRect.Y / dpiScale - SystemParameters.VirtualScreenTop));
-            int bw = Math.Max(1, Math.Min((int)(physRect.Width  / dpiScale), fullBitmap.Width  - bx));
-            int bh = Math.Max(1, Math.Min((int)(physRect.Height / dpiScale), fullBitmap.Height - by));
+            int physLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+            int physTop  = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+            int bx = Math.Max(0, physRect.X - physLeft);
+            int by = Math.Max(0, physRect.Y - physTop);
+            int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
+            int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
 
             using var regionBitmap = fullBitmap.Clone(new Rectangle(bx, by, bw, bh), fullBitmap.PixelFormat);
 
@@ -201,7 +205,7 @@ public class RegionMode : ITranslationMode
 
             var items = new List<OverlayTextItem>();
             for (int i = 0; i < blocks.Count; i++)
-                items.Add(OverlayTextItem.Build(blocks[i], matched[i], fullBitmap));
+                items.Add(OverlayTextItem.Build(blocks[i], matched[i], fullBitmap, dpiScale));
 
             Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
         }
@@ -297,12 +301,5 @@ public class RegionMode : ITranslationMode
         }
     }
 
-    private static double GetPrimaryDpiScale() =>
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            var win = Application.Current.Windows.OfType<Window>().FirstOrDefault();
-            if (win is null) return 1.0;
-            var source = PresentationSource.FromVisual(win);
-            return source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-        });
+    private static double GetPrimaryDpiScale() => DpiHelper.GetPrimaryDpiScale();
 }

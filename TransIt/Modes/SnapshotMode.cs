@@ -49,7 +49,7 @@ public class SnapshotMode : ITranslationMode
         for (int i = 0; i < blocks.Count; i++)
         {
             var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
-            items.Add(OverlayTextItem.Build(blocks[i], text, bitmap));
+            items.Add(OverlayTextItem.Build(blocks[i], text, bitmap, dpiScale));
         }
 
         Application.Current.Dispatcher.Invoke(() => _overlay.ShowFrozenOverlay(items, background));
@@ -80,12 +80,5 @@ public class SnapshotMode : ITranslationMode
     public void Deactivate() =>
         Application.Current.Dispatcher.Invoke(() => _overlay.Hide());
 
-    private static double GetPrimaryDpiScale() =>
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            var win = Application.Current.Windows.OfType<Window>().FirstOrDefault();
-            if (win is null) return 1.0;
-            var source = PresentationSource.FromVisual(win);
-            return source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-        });
+    private static double GetPrimaryDpiScale() => DpiHelper.GetPrimaryDpiScale();
 }

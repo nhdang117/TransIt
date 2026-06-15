@@ -16,16 +16,17 @@ public class OverlayTextItem
     public static OverlayTextItem Build(
         OcrBlock block,
         string translatedText,
-        Bitmap sourceBitmap)
+        Bitmap sourceBitmap,
+        double dpiScale = 1.0)
     {
-        var logicalRect = block.BoundingRect;
-
-        // Bitmap is forced to 96 DPI (1 pixel = 1 WPF DIP), so sample at DIP coords directly.
+        // OCR returns coordinates in sourceBitmap pixel space (physical pixels).
+        // Use them directly to sample colours from the bitmap.
+        var physRect = block.BoundingRect;
         var sampleRect = new Rectangle(
-            (int)logicalRect.X,
-            (int)logicalRect.Y,
-            (int)logicalRect.Width,
-            (int)logicalRect.Height);
+            (int)physRect.X,
+            (int)physRect.Y,
+            Math.Max(1, (int)physRect.Width),
+            Math.Max(1, (int)physRect.Height));
 
         sampleRect.Intersect(new Rectangle(0, 0, sourceBitmap.Width, sourceBitmap.Height));
         if (sampleRect.Width < 1) sampleRect.Width = 1;
@@ -34,15 +35,38 @@ public class OverlayTextItem
         var bgColor = Services.ColorSampler.SampleBackground(sourceBitmap, sampleRect);
         var fgColor = Services.ColorSampler.SampleForeground(sourceBitmap, sampleRect, bgColor);
 
-        // Use per-line height so multi-line blocks start at a sensible font size.
-        double lineHeight = logicalRect.Height / Math.Max(1, block.Lines.Count);
-        double fontSize   = Services.FontSizeEstimator.Estimate(lineHeight);
+        // Convert physical pixel rect to logical DIPs for WPF canvas placement.
+        var logicalRect = dpiScale > 1.0
+            ? new Rect(physRect.X / dpiScale, physRect.Y / dpiScale,
+                       physRect.Width / dpiScale, physRect.Height / dpiScale)
+            : physRect;
+
+        // Average individual OCR line heights (physical px → DIPs).
+        // Do NOT use block.BoundingRect.Height / lineCount — the union bounding
+        // rect includes inter-line gaps, which vary per app (code vs prose) and
+        // inflate lineHeight inconsistently.
+        double avgLinePhys = block.Lines.Average(l => l.BoundingRect.Height);
+        double lineHeight  = avgLinePhys / dpiScale;
+        double fontSize    = Services.FontSizeEstimator.Estimate(lineHeight, block.FullText);
+
+        // DEBUG — writes sizing data to %APPDATA%\TransIt\overlay_debug.log
+        // Remove once font-size tuning is confirmed.
+        try
+        {
+            var dbgPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "TransIt", "overlay_debug.log");
+            System.IO.File.AppendAllText(dbgPath,
+                $"dpi={dpiScale:F2} physH={physRect.Height:F0}px lines={block.Lines.Count} " +
+                $"logH={logicalRect.Height:F1} lineH={lineHeight:F1} fontSize={fontSize:F1}\n");
+        }
+        catch { }
 
         return new OverlayTextItem
         {
-            TranslatedText = translatedText,
-            ScreenRect     = logicalRect,
-            FontSize       = fontSize,
+            TranslatedText  = translatedText,
+            ScreenRect      = logicalRect,
+            FontSize        = fontSize,
             BackgroundColor = ToMediaColor(bgColor),
             ForegroundColor = ToMediaColor(fgColor)
         };

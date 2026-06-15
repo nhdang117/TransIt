@@ -40,7 +40,6 @@ public partial class OverlayCanvas : UserControl
                 Background = new SolidColorBrush(item.BackgroundColor),
                 Width  = item.ScreenRect.Width,
                 Height = item.ScreenRect.Height,
-                Padding = new Thickness(2),
                 ClipToBounds = true
             };
 
@@ -57,31 +56,16 @@ public partial class OverlayCanvas : UserControl
             Canvas.SetLeft(border, item.ScreenRect.X);
             Canvas.SetTop(border,  item.ScreenRect.Y);
             TextLayer.Children.Add(border);
-
-            // Shrink font until text fits within the block height.
-            // Measure tb directly — border has explicit Height so DesiredSize always equals Height.
-            double innerW = item.ScreenRect.Width  - border.Padding.Left - border.Padding.Right;
-            double innerH = item.ScreenRect.Height - border.Padding.Top  - border.Padding.Bottom;
-            tb.Measure(new Size(innerW, double.PositiveInfinity));
-            while (tb.FontSize > 6 && tb.DesiredSize.Height > innerH)
-            {
-                tb.FontSize -= 1;
-                tb.InvalidateMeasure();
-                tb.Measure(new Size(innerW, double.PositiveInfinity));
-            }
         }
     }
 
-    public void SetFrozenBackground(BitmapSource? img, double windowW = 0, double windowH = 0)
+    public void SetFrozenBackground(BitmapSource? img)
     {
         FrozenLayer.Source = img;
         FrozenLayer.Visibility = img is null ? Visibility.Collapsed : Visibility.Visible;
-
-        // Scale TextLayer from bitmap-pixel space to DIP space so OCR coords align with image
-        if (img != null && windowW > 0 && img.PixelWidth > 0)
-            TextLayer.RenderTransform = new ScaleTransform(windowW / img.PixelWidth, windowH / img.PixelHeight);
-        else
-            TextLayer.RenderTransform = Transform.Identity;
+        // TextLayer items are in logical DIPs; FrozenLayer (Stretch="Fill") scales the
+        // background image to fill the window, so no transform on TextLayer is needed.
+        TextLayer.RenderTransform = Transform.Identity;
     }
 
     public void ShowAnnotationToolbar(bool show)

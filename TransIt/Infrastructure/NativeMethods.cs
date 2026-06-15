@@ -87,6 +87,27 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hwnd);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X, Y; }
+
+    public const int MONITOR_DEFAULTTOPRIMARY = 0x00000001;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, int dwFlags);
+
+    // MDT_EFFECTIVE_DPI = 0
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(IntPtr hMonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    // ── System metrics (returns physical pixels for DPI-aware process) ────────
+    public const int SM_XVIRTUALSCREEN  = 76;
+    public const int SM_YVIRTUALSCREEN  = 77;
+    public const int SM_CXVIRTUALSCREEN = 78;
+    public const int SM_CYVIRTUALSCREEN = 79;
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+
     // ── GDI ───────────────────────────────────────────────────────────────────
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr hObject);
