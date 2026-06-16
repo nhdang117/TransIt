@@ -63,6 +63,23 @@ public partial class OverlayWindow : Window
         InstallEscHook();
     }
 
+    /// Ctrl+1 test mode: shows raw PaddleOCR line boxes (yellow) and combined
+    /// paragraph blocks (red) over a frozen screenshot, no translation involved.
+    public void ShowDebugOverlay(IList<Rect> lineRects, IList<Rect> blockRects, BitmapSource background)
+    {
+        PositionOnVirtualScreen();
+        Canvas.SetFrozenBackground(background);
+        Canvas.ShowLoading(false);
+        Canvas.RenderItems([]);
+        Canvas.RenderDebugRects(lineRects, blockRects);
+        Canvas.ShowAnnotationToolbar(false);
+        _annotationMode = false;
+        SetClickThrough(false);
+        Show();
+        Activate();
+        InstallEscHook();
+    }
+
     public void ShowLoadingOverlay(BitmapSource background)
     {
         PositionOnVirtualScreen();
@@ -88,6 +105,7 @@ public partial class OverlayWindow : Window
         UninstallEscHook();
         Canvas.ShowLoading(false);
         Canvas.SetFrozenBackground(null);
+        Canvas.RenderDebugRects([], []);
         Hide();
         Canvas.ClearInk();
         EscapePressed?.Invoke(this, EventArgs.Empty);

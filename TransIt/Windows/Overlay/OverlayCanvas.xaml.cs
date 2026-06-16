@@ -32,6 +32,7 @@ public partial class OverlayCanvas : UserControl
     public void RenderItems(IList<OverlayTextItem> items)
     {
         TextLayer.Children.Clear();
+        DebugLayer.Children.Clear();
 
         foreach (var item in items)
         {
@@ -57,6 +58,34 @@ public partial class OverlayCanvas : UserControl
             Canvas.SetTop(border,  item.ScreenRect.Y);
             TextLayer.Children.Add(border);
         }
+    }
+
+    // Ctrl+1 test mode: yellow = raw PaddleOCR line boxes, red = paragraph blocks
+    // (OcrBlock.GroupLines combining nearby lines).
+    public void RenderDebugRects(IList<Rect> lineRects, IList<Rect> blockRects)
+    {
+        DebugLayer.Children.Clear();
+
+        foreach (var r in lineRects)
+            DebugLayer.Children.Add(MakeRect(r, Colors.Yellow, 1));
+
+        foreach (var r in blockRects)
+            DebugLayer.Children.Add(MakeRect(r, Colors.Red, 2));
+    }
+
+    private static System.Windows.Shapes.Rectangle MakeRect(Rect r, Color stroke, double thickness)
+    {
+        var shape = new System.Windows.Shapes.Rectangle
+        {
+            Width = r.Width,
+            Height = r.Height,
+            Stroke = new SolidColorBrush(stroke),
+            StrokeThickness = thickness,
+            Fill = Brushes.Transparent,
+        };
+        Canvas.SetLeft(shape, r.X);
+        Canvas.SetTop(shape, r.Y);
+        return shape;
     }
 
     public void SetFrozenBackground(BitmapSource? img)

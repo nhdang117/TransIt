@@ -49,6 +49,12 @@ public class OverlayTextItem
         double lineHeight  = avgLinePhys / dpiScale;
         double fontSize    = Services.FontSizeEstimator.Estimate(lineHeight, block.FullText);
 
+        // Translated text is often longer than the source; allow generous vertical growth
+        // (the render border has no fixed height and auto-grows) before shrinking the font,
+        // so only pathological overflow (e.g. a single short word translating to a long phrase) shrinks.
+        double availableHeight = Math.Max(logicalRect.Height, lineHeight * block.Lines.Count) * 2.5;
+        fontSize = Services.TextFitter.FitFontSize(translatedText, fontSize, logicalRect.Width, availableHeight);
+
         // DEBUG — writes sizing data to %APPDATA%\TransIt\overlay_debug.log
         // Remove once font-size tuning is confirmed.
         try

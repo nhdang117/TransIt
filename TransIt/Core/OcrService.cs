@@ -1,101 +1,134 @@
 using System.Drawing;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.Globalization;
-using Windows.Graphics.Imaging;
-using Windows.Media.Ocr;
+using PaddleOCRSharp;
 using AppOcrLine = TransIt.Models.OcrLine;
 using AppOcrWord = TransIt.Models.OcrWord;
 
 namespace TransIt.Core;
 
-public class OcrService
+public class OcrService : IDisposable
 {
+    private readonly SemaphoreSlim _engineLock = new(1, 1);
+    private PaddleOCREngine? _engine;
+    private bool _disposed;
+
+    // languageTag kept for call-site compatibility; OCRModelConfig.V5_CN is a combined
+    // Chinese+English model, so one shared engine covers both bundled source languages.
     public async Task<List<AppOcrLine>> RecognizeAsync(Bitmap bitmap, string languageTag,
                                                         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
-        var language = new Language(languageTag);
-        var engine   = OcrEngine.TryCreateFromLanguage(language)
-                       ?? OcrEngine.TryCreateFromUserProfileLanguages()
-                       ?? throw new InvalidOperationException(
-                           $"No OCR engine available for language '{languageTag}'.");
-
-        using var swBitmap = ConvertToSoftwareBitmap(bitmap);
+        var engine = await GetEngineAsync(ct);
         ct.ThrowIfCancellationRequested();
 
-        var result = await engine.RecognizeAsync(swBitmap);
+        OCRResult result = await Task.Run(() => engine.DetectText(bitmap), ct);
+
+        var rawBlocks = result.TextBlocks
+            .Where(b => !string.IsNullOrWhiteSpace(b.Text))
+            .Select(b => (Text: b.Text, Rect: BoundingRectOf(b.BoxPoints)))
+            .ToList();
+
+        return GroupIntoLines(rawBlocks);
+    }
+
+    public static IReadOnlyList<string> GetInstalledLanguageTags() => ["en", "zh"];
+
+    private async Task<PaddleOCREngine> GetEngineAsync(CancellationToken ct)
+    {
+        if (_engine != null) return _engine;
+
+        await _engineLock.WaitAsync(ct);
+        try
+        {
+            _engine ??= new PaddleOCREngine(OCRModelConfig.V5_CN, new OCRParameter
+            {
+                cls = false,
+                use_angle_cls = false,
+            });
+            return _engine;
+        }
+        finally
+        {
+            _engineLock.Release();
+        }
+    }
+
+    private static System.Windows.Rect BoundingRectOf(IList<OCRPoint> points)
+    {
+        double minX = points.Min(p => p.X);
+        double minY = points.Min(p => p.Y);
+        double maxX = points.Max(p => p.X);
+        double maxY = points.Max(p => p.Y);
+        return new System.Windows.Rect(minX, minY, Math.Max(0, maxX - minX), Math.Max(0, maxY - minY));
+    }
+
+    // PaddleOCR's DetectText returns flat word/phrase-level boxes (not pre-grouped into
+    // lines like Windows.Media.Ocr did), so rows must be clustered here before the
+    // paragraph-level grouping in OcrBlock.GroupLines runs on top.
+    private static List<AppOcrLine> GroupIntoLines(List<(string Text, System.Windows.Rect Rect)> rawBlocks)
+    {
+        if (rawBlocks.Count == 0) return [];
+
+        var sorted = rawBlocks.OrderBy(b => b.Rect.Y).ThenBy(b => b.Rect.X).ToList();
+        var rows = new List<List<(string Text, System.Windows.Rect Rect)>> { new() { sorted[0] } };
+
+        for (int i = 1; i < sorted.Count; i++)
+        {
+            var block = sorted[i];
+            var row = rows[^1];
+            double rowCenterY = row.Average(b => b.Rect.Y + b.Rect.Height / 2);
+            double rowHeight = row.Max(b => b.Rect.Height);
+            double blockCenterY = block.Rect.Y + block.Rect.Height / 2;
+
+            if (Math.Abs(blockCenterY - rowCenterY) <= rowHeight * 0.5)
+                row.Add(block);
+            else
+                rows.Add(new List<(string Text, System.Windows.Rect Rect)> { block });
+        }
 
         var lines = new List<AppOcrLine>();
-        foreach (var ocrLine in result.Lines)
+        foreach (var row in rows)
         {
-            var words = ocrLine.Words
-                .Select(w => new AppOcrWord
-                {
-                    Text = w.BoundingRect.Width > 0 ? w.Text : string.Empty,
-                    BoundingRect = new System.Windows.Rect(
-                        w.BoundingRect.X, w.BoundingRect.Y,
-                        w.BoundingRect.Width, w.BoundingRect.Height)
-                })
-                .Where(w => !string.IsNullOrWhiteSpace(w.Text))
-                .ToList();
+            // A row band can still contain disjoint columns (e.g. two side-by-side text
+            // blocks at the same Y) — split on large horizontal gaps before treating the
+            // rest as one line of words.
+            var ordered = row.OrderBy(b => b.Rect.X).ToList();
+            double rowHeight = ordered.Max(b => b.Rect.Height);
+            var segments = new List<List<(string Text, System.Windows.Rect Rect)>> { new() { ordered[0] } };
 
-            if (words.Count == 0) continue;
-
-            lines.Add(new AppOcrLine
+            for (int i = 1; i < ordered.Count; i++)
             {
-                Words = words,
-                FullText = string.Join(" ", words.Select(w => w.Text)),
-                BoundingRect = UnionRects(words.Select(w => w.BoundingRect))
-            });
+                var prevRect = segments[^1][^1].Rect;
+                double horizontalGap = ordered[i].Rect.X - prevRect.Right;
+                if (horizontalGap > rowHeight * 2.0)
+                    segments.Add(new List<(string Text, System.Windows.Rect Rect)> { ordered[i] });
+                else
+                    segments[^1].Add(ordered[i]);
+            }
+
+            foreach (var segment in segments)
+            {
+                var words = segment.Select(b => new AppOcrWord { Text = b.Text, BoundingRect = b.Rect }).ToList();
+
+                var union = System.Windows.Rect.Empty;
+                foreach (var w in words) union.Union(w.BoundingRect);
+
+                lines.Add(new AppOcrLine
+                {
+                    Words = words,
+                    FullText = string.Join(" ", words.Select(w => w.Text)),
+                    BoundingRect = union,
+                });
+            }
         }
         return lines;
     }
 
-    public static IReadOnlyList<string> GetInstalledLanguageTags() =>
-        OcrEngine.AvailableRecognizerLanguages
-                 .Select(l => l.LanguageTag)
-                 .ToList();
-
-    private static SoftwareBitmap ConvertToSoftwareBitmap(Bitmap gdiBitmap)
+    public void Dispose()
     {
-        using var bmpBgra = gdiBitmap.Clone(
-            new Rectangle(0, 0, gdiBitmap.Width, gdiBitmap.Height),
-            PixelFormat.Format32bppArgb);
-
-        var bmpData = bmpBgra.LockBits(
-            new Rectangle(0, 0, bmpBgra.Width, bmpBgra.Height),
-            ImageLockMode.ReadOnly,
-            PixelFormat.Format32bppArgb);
-
-        try
-        {
-            int byteCount = Math.Abs(bmpData.Stride) * bmpBgra.Height;
-            byte[] pixels = new byte[byteCount];
-            Marshal.Copy(bmpData.Scan0, pixels, 0, byteCount);
-
-            var swBitmap = new SoftwareBitmap(
-                BitmapPixelFormat.Bgra8,
-                bmpBgra.Width,
-                bmpBgra.Height,
-                BitmapAlphaMode.Premultiplied);
-
-            swBitmap.CopyFromBuffer(pixels.AsBuffer());
-            return swBitmap;
-        }
-        finally
-        {
-            bmpBgra.UnlockBits(bmpData);
-        }
-    }
-
-    private static System.Windows.Rect UnionRects(IEnumerable<System.Windows.Rect> rects)
-    {
-        var result = System.Windows.Rect.Empty;
-        foreach (var r in rects)
-            result.Union(r);
-        return result;
+        if (_disposed) return;
+        _disposed = true;
+        _engine?.Dispose();
+        _engineLock.Dispose();
     }
 }

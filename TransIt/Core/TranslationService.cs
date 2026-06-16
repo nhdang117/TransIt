@@ -28,6 +28,83 @@ public class TranslationService
             : TranslateGoogleAsync(texts, sourceLang, targetLang, ct);
     }
 
+    public record TranslatableBlock(int Id, string Text, double X, double Y, double W, double H);
+
+    // Sends each block's text together with its on-screen rectangle so the model has layout
+    // context (e.g. table cells vs. paragraphs). Rects never round-trip back — mapping to the
+    // local OcrBlock rects happens here via Id, which avoids the shuffling risk of a bare
+    // positional string array if the model reorders or drops an item.
+    public async Task<Dictionary<int, string>> TranslateBlocksAsync(
+        IList<TranslatableBlock> blocks,
+        string sourceLang,
+        string targetLang,
+        CancellationToken ct = default)
+    {
+        if (blocks.Count == 0) return new Dictionary<int, string>();
+
+        return _settings.Provider == TranslationProvider.OpenAI
+            ? await TranslateBlocksOpenAiAsync(blocks, sourceLang, targetLang, ct)
+            : await TranslateBlocksGoogleAsync(blocks, sourceLang, targetLang, ct);
+    }
+
+    private async Task<Dictionary<int, string>> TranslateBlocksOpenAiAsync(
+        IList<TranslatableBlock> blocks, string src, string tgt, CancellationToken ct)
+    {
+        var inputJson = JsonSerializer.Serialize(blocks);
+        var systemPrompt =
+            $"You are a professional translator from {src} to {tgt}. Follow these rules exactly:\n" +
+            $"1. Translate every item's \"Text\" field from {src} to {tgt}.\n" +
+            $"2. Preserve ALL newline characters (\\n) at exactly the same positions as in the source.\n" +
+            $"3. Leave UNCHANGED: mathematical and technical symbols (→ ← ↑ ↓ ≤ ≥ ≠ ≈ ± × ÷ ∑ √ ∞ ∈ ∉ ⊂ ⊃ ∩ ∪ ∀ ∃ etc.), " +
+            $"ASCII operators and punctuation used as symbols (-> >= <= == != => ** // etc.), " +
+            $"identifiers in camelCase / PascalCase / snake_case / SCREAMING_SNAKE_CASE, " +
+            $"proper nouns and personal names, URLs, file paths, version numbers, and numeric values.\n" +
+            $"4. Preserve the original punctuation structure: hyphens, dashes, commas, and end-of-line periods.\n" +
+            $"5. Each input item has an \"Id\" and a rectangle (X, Y, W, H) giving its position on screen — use the rectangle only as layout context (e.g. to tell paragraphs apart from table cells), do not include X/Y/W/H in your output.\n" +
+            $"6. Return ONLY a valid JSON array of objects shaped like {{\"id\": <int>, \"translatedText\": \"...\"}}, one per input item, with \"id\" exactly matching an input item's \"Id\". No markdown fences, no explanations.";
+
+        var body = new
+        {
+            model = _settings.OpenAiModel,
+            messages = new[]
+            {
+                new { role = "system", content = systemPrompt },
+                new { role = "user",   content = inputJson }
+            },
+            temperature = 0.1
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
+
+        var resp = await _http.SendAsync(request, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+
+        var doc = JsonNode.Parse(json);
+        var content = doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
+                      ?? throw new Exception("Unexpected OpenAI response shape.");
+
+        return ParseJsonIdArray(content, blocks.Select(b => b.Id).ToList());
+    }
+
+    private async Task<Dictionary<int, string>> TranslateBlocksGoogleAsync(
+        IList<TranslatableBlock> blocks, string src, string tgt, CancellationToken ct)
+    {
+        var texts = blocks.Select(b => b.Text).ToList();
+        var translated = await TranslateGoogleAsync(texts, src, tgt, ct);
+
+        var result = new Dictionary<int, string>();
+        for (int i = 0; i < blocks.Count; i++)
+            result[blocks[i].Id] = i < translated.Count ? translated[i] : string.Empty;
+        return result;
+    }
+
     // ── OpenAI ───────────────────────────────────────────────────────────────
 
     private async Task<List<string>> TranslateOpenAiAsync(
@@ -189,9 +266,8 @@ public class TranslationService
 
     // ── Helper ────────────────────────────────────────────────────────────────
 
-    private static List<string> ParseJsonArray(string content, int expectedCount)
+    private static string StripMarkdownFences(string content)
     {
-        // Strip markdown code fences if present
         content = content.Trim();
         if (content.StartsWith("```"))
         {
@@ -199,6 +275,33 @@ public class TranslationService
             var start = content.IndexOf('\n') + 1;
             if (end > start) content = content[start..end].Trim();
         }
+        return content;
+    }
+
+    private record TranslatedIdItem(int Id, string TranslatedText);
+
+    private static Dictionary<int, string> ParseJsonIdArray(string content, IReadOnlyCollection<int> expectedIds)
+    {
+        content = StripMarkdownFences(content);
+
+        var result = new Dictionary<int, string>();
+        try
+        {
+            var items = JsonSerializer.Deserialize<List<TranslatedIdItem>>(content, _jsonOpts);
+            if (items != null)
+                foreach (var item in items)
+                    result[item.Id] = item.TranslatedText;
+        }
+        catch { /* fall through */ }
+
+        foreach (var id in expectedIds)
+            result.TryAdd(id, string.Empty);
+        return result;
+    }
+
+    private static List<string> ParseJsonArray(string content, int expectedCount)
+    {
+        content = StripMarkdownFences(content);
 
         try
         {

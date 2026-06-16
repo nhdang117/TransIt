@@ -14,6 +14,7 @@ internal static class NativeMethods
     public const uint MOD_NOREPEAT = 0x4000;
 
     // ── Virtual key codes ─────────────────────────────────────────────────────
+    public const uint VK_1      = 0x31;
     public const uint VK_2      = 0x32;
     public const uint VK_3      = 0x33;
     public const uint VK_ESCAPE = 0x1B;

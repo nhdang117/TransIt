@@ -17,9 +17,10 @@ public partial class App : Application
     private OcrService _ocr = null!;
     private TranslationService _translator = null!;
 
-    private SnapshotMode? _snapshotMode;
-    private RegionMode?   _regionMode;
-    private RealtimeMode? _realtimeMode;
+    private SnapshotMode?  _snapshotMode;
+    private RegionMode?    _regionMode;
+    private RealtimeMode?  _realtimeMode;
+    private OcrDebugMode?  _ocrDebugMode;
 
     private CancellationTokenSource? _realtimeCts;
     private bool _realtimeActive;
@@ -36,6 +37,7 @@ public partial class App : Application
         _snapshotMode = new SnapshotMode(_ocr, _translator, _settings, _overlay);
         _regionMode   = new RegionMode(_ocr, _translator, _settings, _overlay);
         _realtimeMode = new RealtimeMode(_ocr, _translator, _settings, _overlay);
+        _ocrDebugMode = new OcrDebugMode(_ocr, _settings, _overlay);
 
         _tray = new TrayIconManager();
         _tray.SnapshotRequested       += (_, _) => RunSnapshot();
@@ -48,11 +50,12 @@ public partial class App : Application
         _hotkeys.Initialize();
         _hotkeys.HotkeyPressed += OnHotkey;
 
-        bool alt2 = _hotkeys.Register(HotkeyManager.ID_SNAPSHOT, Infrastructure.NativeMethods.MOD_ALT,     Infrastructure.NativeMethods.VK_2);
-        bool ctrl2 = _hotkeys.Register(HotkeyManager.ID_REGION,  Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_2);
-        bool alt3 = _hotkeys.Register(HotkeyManager.ID_REALTIME, Infrastructure.NativeMethods.MOD_ALT,     Infrastructure.NativeMethods.VK_3);
+        bool alt2 = _hotkeys.Register(HotkeyManager.ID_SNAPSHOT,  Infrastructure.NativeMethods.MOD_ALT,     Infrastructure.NativeMethods.VK_2);
+        bool ctrl2 = _hotkeys.Register(HotkeyManager.ID_REGION,   Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_2);
+        bool alt3 = _hotkeys.Register(HotkeyManager.ID_REALTIME,  Infrastructure.NativeMethods.MOD_ALT,     Infrastructure.NativeMethods.VK_3);
+        bool ctrl1 = _hotkeys.Register(HotkeyManager.ID_OCR_DEBUG, Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_1);
 
-        if (!alt2 || !ctrl2 || !alt3)
+        if (!alt2 || !ctrl2 || !alt3 || !ctrl1)
             _tray.ShowBalloon("TransIt", "Some hotkeys could not be registered (already in use).", BalloonIcon.Warning);
 
         // First-run: open settings if no API key configured
@@ -64,9 +67,10 @@ public partial class App : Application
     {
         switch (id)
         {
-            case HotkeyManager.ID_SNAPSHOT: RunSnapshot();    break;
-            case HotkeyManager.ID_REGION:   RunRegion();      break;
-            case HotkeyManager.ID_REALTIME: ToggleRealtime(); break;
+            case HotkeyManager.ID_SNAPSHOT:  RunSnapshot();    break;
+            case HotkeyManager.ID_REGION:    RunRegion();      break;
+            case HotkeyManager.ID_REALTIME:  ToggleRealtime(); break;
+            case HotkeyManager.ID_OCR_DEBUG: RunOcrDebug();    break;
         }
     }
 
@@ -90,6 +94,20 @@ public partial class App : Application
         _realtimeMode?.Deactivate();
         _realtimeActive = false;
         Task.Run(() => _regionMode!.ActivateAsync(CancellationToken.None))
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    Dispatcher.Invoke(() =>
+                        _tray.ShowBalloon("TransIt Error", t.Exception?.InnerException?.Message ?? "Unknown error", BalloonIcon.Error));
+            });
+    }
+
+    private void RunOcrDebug()
+    {
+        // No API key needed — this mode only runs OCR, no translation call.
+        _realtimeMode?.Deactivate();
+        _realtimeActive = false;
+        Task.Run(() => _ocrDebugMode!.ActivateAsync(CancellationToken.None))
             .ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -133,6 +151,7 @@ public partial class App : Application
         _snapshotMode = new SnapshotMode(_ocr, _translator, _settings, _overlay);
         _regionMode   = new RegionMode(_ocr, _translator, _settings, _overlay);
         _realtimeMode = new RealtimeMode(_ocr, _translator, _settings, _overlay);
+        _ocrDebugMode = new OcrDebugMode(_ocr, _settings, _overlay);
     }
 
     private bool CheckApiKey()
@@ -150,6 +169,7 @@ public partial class App : Application
         _hotkeys.UnregisterAll();
         _hotkeys.Dispose();
         _tray.Dispose();
+        _ocr.Dispose();
         _settings.Save();
         base.OnExit(e);
     }

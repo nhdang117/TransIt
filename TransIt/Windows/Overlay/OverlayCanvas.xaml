@@ -9,6 +9,9 @@
         <!-- Layer 1: translated text blocks -->
         <Canvas x:Name="TextLayer" />
 
+        <!-- Layer 1b: OCR debug rectangles (Ctrl+1 test mode) -->
+        <Canvas x:Name="DebugLayer" />
+
         <!-- Layer 2: ink annotations -->
         <InkCanvas x:Name="InkLayer"
                    Background="Transparent"

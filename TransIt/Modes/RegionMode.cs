@@ -94,8 +94,9 @@ public class RegionMode : ITranslationMode
             }
 
             var blocks = OcrBlock.GroupLines(lines);
-            var texts = blocks.Select(b => b.FullText).ToList();
-            var translated = await _translator.TranslateAsync(texts,
+            var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
+                i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
+            var translatedById = await _translator.TranslateBlocksAsync(translatable,
                 _settings.SourceLanguage, _settings.TargetLanguage, ct);
 
             double monLogX = monRect.Left / dpiScale;
@@ -104,7 +105,7 @@ public class RegionMode : ITranslationMode
             var items = new List<OverlayTextItem>();
             for (int i = 0; i < blocks.Count; i++)
             {
-                var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
+                var text = translatedById.TryGetValue(i, out var t) && !string.IsNullOrWhiteSpace(t) ? t : blocks[i].FullText;
                 var item = OverlayTextItem.Build(blocks[i], text, fullBitmap, dpiScale);
                 item.ScreenRect = new System.Windows.Rect(
                     item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
@@ -144,9 +145,12 @@ public class RegionMode : ITranslationMode
             }
 
             var blocks = OcrBlock.GroupLines(lines);
-            var texts = blocks.Select(b => b.FullText).ToList();
-            var translated = await _translator.TranslateAsync(texts,
+            var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
+                i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
+            var translatedById = await _translator.TranslateBlocksAsync(translatable,
                 _settings.SourceLanguage, _settings.TargetLanguage, ct);
+            var translated = blocks.Select((b, i) =>
+                translatedById.TryGetValue(i, out var t) && !string.IsNullOrWhiteSpace(t) ? t : b.FullText).ToList();
 
             Application.Current.Dispatcher.Invoke(() => pane!.ShowTranslation(translated));
         }

@@ -43,8 +43,9 @@ public class SnapshotMode : ITranslationMode
         }
 
         var blocks = OcrBlock.GroupLines(lines);
-        var texts  = blocks.Select(b => b.FullText).ToList();
-        var translated = await _translator.TranslateAsync(texts,
+        var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
+            i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
+        var translatedById = await _translator.TranslateBlocksAsync(translatable,
             _settings.SourceLanguage, _settings.TargetLanguage, ct);
 
         // Monitor-relative DIPs → virtual-screen DIPs so the canvas (spanning all monitors) positions items correctly.
@@ -54,7 +55,7 @@ public class SnapshotMode : ITranslationMode
         var items = new List<OverlayTextItem>();
         for (int i = 0; i < blocks.Count; i++)
         {
-            var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
+            var text = translatedById.TryGetValue(i, out var t) && !string.IsNullOrWhiteSpace(t) ? t : blocks[i].FullText;
             var item = OverlayTextItem.Build(blocks[i], text, bitmap, dpiScale);
             item.ScreenRect = new System.Windows.Rect(
                 item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
