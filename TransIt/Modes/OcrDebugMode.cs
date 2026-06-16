@@ -95,6 +95,12 @@ public class OcrDebugMode : ITranslationMode
                 catch (Exception ex) { layoutError = ex.Message; }
             }
 
+            // DetectAsync returns rects relative to regionBitmap (the crop); lines were just
+            // offset to fullBitmap space above, so regions need the same offset or every
+            // line/region overlap check below compares mismatched origins.
+            foreach (var region in regions)
+                region.BoundingRect = Offset(region.BoundingRect, bx, by);
+
             var blocks = regions.Count > 0
                 ? OcrBlock.GroupLinesWithLayout(lines, regions)
                 : OcrBlock.GroupLines(lines);

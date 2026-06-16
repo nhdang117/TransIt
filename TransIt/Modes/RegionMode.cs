@@ -95,7 +95,7 @@ public class RegionMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
-            var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct);
+            var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct, bx, by);
             var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var translatedById = await _translator.TranslateBlocksAsync(translatable,
@@ -210,7 +210,7 @@ public class RegionMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
-            var blocks      = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct);
+            var blocks      = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct, bx, by);
             var visionTexts = visionTask.Result;
             var matched     = MatchVisionToBlocks(blocks, visionTexts);
 

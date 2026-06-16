@@ -117,7 +117,10 @@ public class OcrBlock
         foreach (var region in orderedRegions)
         {
             if (!assigned.TryGetValue(region, out var regionLines) || regionLines.Count == 0) continue;
-            blocks.Add(new OcrBlock { Lines = regionLines.OrderBy(l => l.BoundingRect.Y).ToList() });
+            // A region can still contain multiple paragraphs (e.g. a blank-line gap within
+            // one "Text" region) - re-run the geometric splitter inside the region's own line
+            // set instead of merging everything the layout pass assigned into one block.
+            blocks.AddRange(GroupLines(regionLines));
         }
 
         if (unassigned.Count > 0)

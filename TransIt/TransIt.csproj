@@ -3,6 +3,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -17,10 +18,6 @@
     <PackageReference Include="System.Text.Json" Version="9.0.5" />
     <PackageReference Include="PaddleOCRSharp" Version="6.2.0" />
     <PackageReference Include="Paddle.Runtime.win_x64" Version="3.3.0.1" />
-    <PackageReference Include="Sdcb.PaddleDetection" Version="2.3.3.1" />
-    <PackageReference Include="Sdcb.PaddleInference.runtime.win64.mkl" Version="2.5.1" />
-    <PackageReference Include="OpenCvSharp4" Version="4.10.0.20241108" />
-    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20241108" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,5 +29,23 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <!-- Layout detection runs out-of-process (see LayoutService.cs) so its native deps never
+       share a module table with PaddleOCRSharp's same-named but incompatible copies of
+       mkldnn.dll/mklml.dll/libiomp5md.dll. ReferenceOutputAssembly=false because TransIt
+       only launches the worker as a child process; it never links against its assembly. -->
+  <ItemGroup>
+    <ProjectReference Include="..\TransIt.LayoutWorker\TransIt.LayoutWorker.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyLayoutWorkerOutput" AfterTargets="Build">
+    <ItemGroup>
+      <LayoutWorkerFiles Include="..\TransIt.LayoutWorker\bin\$(Configuration)\net8.0-windows10.0.19041.0\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LayoutWorkerFiles)" DestinationFolder="$(OutDir)LayoutWorker\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
