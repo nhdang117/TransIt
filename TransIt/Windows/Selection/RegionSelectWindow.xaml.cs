@@ -21,6 +21,7 @@ public partial class RegionSelectWindow : Window
         Top    = SystemParameters.VirtualScreenTop;
         Width  = SystemParameters.VirtualScreenWidth;
         Height = SystemParameters.VirtualScreenHeight;
+        DimOuterGeometry.Rect = new Rect(0, 0, Width, Height);
     }
 
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -33,8 +34,11 @@ public partial class RegionSelectWindow : Window
 
     private void Window_MouseMove(object sender, MouseEventArgs e)
     {
+        var pos = e.GetPosition(SelectionCanvas);
+        UpdateCrosshair(pos);
+
         if (!_isDragging) return;
-        var cur = e.GetPosition(SelectionCanvas);
+        var cur = pos;
         double x = Math.Min(_startPoint.X, cur.X);
         double y = Math.Min(_startPoint.Y, cur.Y);
         double w = Math.Abs(cur.X - _startPoint.X);
@@ -44,6 +48,8 @@ public partial class RegionSelectWindow : Window
         System.Windows.Controls.Canvas.SetTop(SelectionRect, y);
         SelectionRect.Width  = w;
         SelectionRect.Height = h;
+
+        DimHoleGeometry.Rect = new Rect(x, y, w, h);
 
         SizeLabel.Text = $"{(int)w} × {(int)h}";
         System.Windows.Controls.Canvas.SetLeft(SizeLabel, x);
@@ -71,6 +77,25 @@ public partial class RegionSelectWindow : Window
         }
 
         Close();
+    }
+
+    private void UpdateCrosshair(System.Windows.Point pos)
+    {
+        CrosshairVOuter.X1 = CrosshairVOuter.X2 = pos.X;
+        CrosshairVOuter.Y1 = 0;
+        CrosshairVOuter.Y2 = Height;
+
+        CrosshairVInner.X1 = CrosshairVInner.X2 = pos.X;
+        CrosshairVInner.Y1 = 0;
+        CrosshairVInner.Y2 = Height;
+
+        CrosshairHOuter.Y1 = CrosshairHOuter.Y2 = pos.Y;
+        CrosshairHOuter.X1 = 0;
+        CrosshairHOuter.X2 = Width;
+
+        CrosshairHInner.Y1 = CrosshairHInner.Y2 = pos.Y;
+        CrosshairHInner.X1 = 0;
+        CrosshairHInner.X2 = Width;
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)

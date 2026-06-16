@@ -23,9 +23,6 @@ public class OcrBlock
         if (lines.Count == 0) return [];
 
         var sorted = lines.OrderBy(l => l.BoundingRect.Y).ToList();
-        double avgH = sorted.Average(l => l.BoundingRect.Height);
-        double gapThreshold = avgH * 1.5;
-
         var blocks = new List<OcrBlock>();
         var current = new OcrBlock();
         current.Lines.Add(sorted[0]);
@@ -34,7 +31,8 @@ public class OcrBlock
         {
             var prev = current.Lines[^1];
             double gap = sorted[i].BoundingRect.Y - (prev.BoundingRect.Y + prev.BoundingRect.Height);
-            if (gap <= gapThreshold)
+            double localH = Math.Max(prev.BoundingRect.Height, sorted[i].BoundingRect.Height);
+            if (gap <= localH * 1.5)
                 current.Lines.Add(sorted[i]);
             else
             {

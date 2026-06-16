@@ -61,20 +61,19 @@ public class RegionMode : ITranslationMode
 
     private async Task RunOverlayMode(System.Drawing.Rectangle physRect, CancellationToken ct)
     {
-        using var fullBitmap = ScreenCaptureService.CaptureFullScreen();
-        double dpiScale = GetPrimaryDpiScale();
+        // Determine monitor from selection center — correct DPI even if cursor moved after hotkey.
+        var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
+            physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
+        using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
         var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(fullBitmap));
 
         Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
 
         try
         {
-            // fullBitmap is captured in physical pixels; physRect is also in physical pixels.
-            // Offset into the bitmap = physRect origin minus the virtual screen's physical origin.
-            int physLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
-            int physTop  = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
-            int bx = Math.Max(0, physRect.X - physLeft);
-            int by = Math.Max(0, physRect.Y - physTop);
+            // Offset into the monitor bitmap = physRect origin minus monitor's physical origin.
+            int bx = Math.Max(0, physRect.X - monRect.Left);
+            int by = Math.Max(0, physRect.Y - monRect.Top);
             int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
             int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
 
@@ -99,11 +98,18 @@ public class RegionMode : ITranslationMode
             var translated = await _translator.TranslateAsync(texts,
                 _settings.SourceLanguage, _settings.TargetLanguage, ct);
 
+            double monLogX = monRect.Left / dpiScale;
+            double monLogY = monRect.Top  / dpiScale;
+
             var items = new List<OverlayTextItem>();
             for (int i = 0; i < blocks.Count; i++)
             {
                 var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
-                items.Add(OverlayTextItem.Build(blocks[i], text, fullBitmap, dpiScale));
+                var item = OverlayTextItem.Build(blocks[i], text, fullBitmap, dpiScale);
+                item.ScreenRect = new System.Windows.Rect(
+                    item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
+                    item.ScreenRect.Width, item.ScreenRect.Height);
+                items.Add(item);
             }
 
             Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
@@ -156,17 +162,16 @@ public class RegionMode : ITranslationMode
 
     private async Task RunVisionOverlayMode(System.Drawing.Rectangle physRect, CancellationToken ct)
     {
-        using var fullBitmap = ScreenCaptureService.CaptureFullScreen();
-        double dpiScale = GetPrimaryDpiScale();
+        var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
+            physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
+        using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
         var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(fullBitmap));
         Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
 
         try
         {
-            int physLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
-            int physTop  = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
-            int bx = Math.Max(0, physRect.X - physLeft);
-            int by = Math.Max(0, physRect.Y - physTop);
+            int bx = Math.Max(0, physRect.X - monRect.Left);
+            int by = Math.Max(0, physRect.Y - monRect.Top);
             int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
             int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
 
@@ -203,9 +208,18 @@ public class RegionMode : ITranslationMode
             var visionTexts = visionTask.Result;
             var matched     = MatchVisionToBlocks(blocks, visionTexts);
 
+            double monLogX = monRect.Left / dpiScale;
+            double monLogY = monRect.Top  / dpiScale;
+
             var items = new List<OverlayTextItem>();
             for (int i = 0; i < blocks.Count; i++)
-                items.Add(OverlayTextItem.Build(blocks[i], matched[i], fullBitmap, dpiScale));
+            {
+                var item = OverlayTextItem.Build(blocks[i], matched[i], fullBitmap, dpiScale);
+                item.ScreenRect = new System.Windows.Rect(
+                    item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
+                    item.ScreenRect.Width, item.ScreenRect.Height);
+                items.Add(item);
+            }
 
             Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
         }
@@ -301,5 +315,4 @@ public class RegionMode : ITranslationMode
         }
     }
 
-    private static double GetPrimaryDpiScale() => DpiHelper.GetPrimaryDpiScale();
 }

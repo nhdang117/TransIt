@@ -69,14 +69,15 @@ public class RealtimeMode : ITranslationMode
 
     private async Task RunPipelineAsync(CancellationToken ct)
     {
-        using var bitmap = ScreenCaptureService.CaptureFullScreen();
+        var capture = ScreenCaptureService.CaptureMonitorAtCursor();
+        using var bitmap = capture.bitmap;
+        double dpiScale = capture.dpiScale;
+        var monRect = capture.monRect;
 
         bool force = _forceNext;
         _forceNext = false;
 
         if (!force && !_changeDetector.HasChanged(bitmap)) return;
-
-        double dpiScale = GetPrimaryDpiScale();
         var lines = await _ocr.RecognizeAsync(bitmap, _settings.SourceLanguage, ct);
         if (lines.Count == 0)
         {
@@ -89,15 +90,21 @@ public class RealtimeMode : ITranslationMode
         var translated = await _translator.TranslateAsync(texts,
             _settings.SourceLanguage, _settings.TargetLanguage, ct);
 
+        double monLogX = monRect.Left / dpiScale;
+        double monLogY = monRect.Top  / dpiScale;
+
         var items = new List<OverlayTextItem>();
         for (int i = 0; i < blocks.Count; i++)
         {
             var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
-            items.Add(OverlayTextItem.Build(blocks[i], text, bitmap, dpiScale));
+            var item = OverlayTextItem.Build(blocks[i], text, bitmap, dpiScale);
+            item.ScreenRect = new System.Windows.Rect(
+                item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
+                item.ScreenRect.Width, item.ScreenRect.Height);
+            items.Add(item);
         }
 
         Application.Current.Dispatcher.Invoke(() => _overlay.ShowOverlay(items));
     }
 
-    private static double GetPrimaryDpiScale() => DpiHelper.GetPrimaryDpiScale();
 }

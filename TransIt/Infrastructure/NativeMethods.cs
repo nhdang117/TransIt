@@ -99,7 +99,7 @@ internal static class NativeMethods
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(IntPtr hMonitor, int dpiType, out uint dpiX, out uint dpiY);
 
-    // ── System metrics (returns physical pixels for DPI-aware process) ────────
+    // ── System metrics ────────────────────────────────────────────────────────
     public const int SM_XVIRTUALSCREEN  = 76;
     public const int SM_YVIRTUALSCREEN  = 77;
     public const int SM_CXVIRTUALSCREEN = 78;
@@ -108,7 +108,23 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern int GetSystemMetrics(int nIndex);
 
-    // ── GDI ───────────────────────────────────────────────────────────────────
+    // ── GDI / GetDeviceCaps ───────────────────────────────────────────────────
+    // DESKTOPHORZRES/VERTRES bypass DPI virtualization — always returns true
+    // hardware pixel count regardless of scale factor or DPI awareness context.
+    public const int DESKTOPHORZRES = 118;
+    public const int DESKTOPVERTRES = 117;
+    public const int HORZRES        = 8;   // logical (DPI-scaled) — avoid for capture
+    public const int VERTRES        = 10;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("gdi32.dll")]
+    public static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr hObject);
 
@@ -121,6 +137,21 @@ internal static class NativeMethods
             System.Drawing.Rectangle.FromLTRB(Left, Top, Right, Bottom);
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor; // physical pixel rect of the monitor
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out POINT lpPoint);
 }

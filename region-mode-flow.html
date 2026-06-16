@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TransIt — Ctrl+2 (Region Mode) Call Flow</title>
+<style>
+  :root{
+    --c1:#e8a23a; --c2:#3a7bd5; --c3:#27ae60; --c4:#9b59b6;
+    --c5:#d4900f; --c6:#16a085; --c7:#e74c3c; --c8:#2c3e94;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; font-family:Segoe UI,Consolas,monospace; background:#1b1d23; color:#ddd;}
+  header{
+    position:sticky; top:0; z-index:50; background:#14151a; padding:10px 18px;
+    border-bottom:1px solid #333; display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  }
+  header h1{font-size:15px; margin:0; color:#fff; font-weight:600;}
+  header .legend{display:flex; gap:10px; font-size:11px; flex-wrap:wrap;}
+  header .legend span{display:inline-flex; align-items:center; gap:5px;}
+  header .legend i{width:10px;height:10px;border-radius:2px;display:inline-block;}
+  header .hint{font-size:11px; color:#888; margin-left:auto;}
+  #main{display:flex; height:calc(100vh - 48px);}
+  #flowpanel{flex:0 0 470px; overflow-y:auto; overflow-x:hidden; background:#1b1d23; border-right:1px solid #333; padding:14px 0;}
+  #wrap{position:relative; overflow:hidden; flex:1 1 auto; min-width:0; height:100%; cursor:grab; background:
+    repeating-linear-gradient(0deg, transparent, transparent 39px, #26282f 40px),
+    repeating-linear-gradient(90deg, transparent, transparent 39px, #26282f 40px);
+  }
+  #wrap.panning{cursor:grabbing;}
+  #viewport{position:absolute; top:0; left:0; transform-origin:0 0;}
+  #canvas{position:relative; width:1100px; height:1650px;}
+  #svg{position:absolute; top:0; left:0; pointer-events:none; overflow:visible;}
+  .fc-term{fill:#2c3e94; stroke:#5d72d6;}
+  .fc-rect{fill:#22242b; stroke:#3a7bd5; stroke-width:1.5;}
+  .fc-rect.fc-alt{fill:#22242b; stroke:#888; stroke-dasharray:4,3;}
+  .fc-dec{fill:#2a2c1f; stroke:#e8a23a; stroke-width:1.5;}
+  .fc-label{fill:#eee; font-size:11px; text-anchor:middle; dominant-baseline:middle; font-family:Segoe UI,Consolas,monospace;}
+  .fc-label.fc-term-label{fill:#fff; font-weight:700;}
+  .fc-badge{fill:#ffd23f; stroke:#fff; stroke-width:1;}
+  .fc-badge-text{fill:#111; font-size:9px; font-weight:700; text-anchor:middle; dominant-baseline:middle;}
+  .fc-arrowline{stroke:#666; stroke-width:1.5; fill:none;}
+  .fc-arrowline.fc-alt-line{stroke:#888; stroke-dasharray:4,3;}
+  .card{
+    position:absolute; width:210px; border-radius:6px; border:1.5px solid;
+    background:#22242b; box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  .card .hdr{
+    padding:6px 8px; font-size:11px; font-weight:700; border-bottom:1px solid rgba(255,255,255,.15);
+    border-radius:5px 5px 0 0; color:#111; cursor:move; user-select:none;
+  }
+  .card.dragging{box-shadow:0 0 0 2px #ffd23f, 0 6px 18px rgba(0,0,0,.6); z-index:10;}
+  .card .hdr small{display:block; font-weight:400; font-size:9px; opacity:.75;}
+  .fn{
+    position:relative; height:26px; display:flex; align-items:center; font-size:10.5px;
+    padding:0 14px; color:#eee; border-bottom:1px solid rgba(255,255,255,.05);
+    white-space:nowrap;
+  }
+  .fn.alt{color:#999; font-style:italic;}
+  .fn.has-desc{border-bottom:1px dotted #888; cursor:help;}
+  .port{
+    position:absolute; width:9px; height:9px; border-radius:50%;
+    background:#555; border:1.5px solid #aaa; top:50%; transform:translateY(-50%);
+  }
+  .port.l{left:-5px;}
+  .port.r{right:-5px;}
+  .port.active{background:#ffd23f; border-color:#fff; box-shadow:0 0 6px #ffd23f;}
+  .fn.hl{background:rgba(255,210,63,.15);}
+  path.edge{fill:none; stroke:#555; stroke-width:1.6; opacity:.55; marker-end:url(#arrow-gray);}
+  path.edge.main{stroke:#ffd23f; stroke-width:2.2; opacity:.95; marker-end:url(#arrow-yellow);}
+  path.edge.hl-in{stroke:#4aa8ff !important; stroke-width:3 !important; opacity:1 !important; marker-end:url(#arrow-blue) !important;}
+  path.edge.hl-out{stroke:#ff5f5f !important; stroke-width:3 !important; opacity:1 !important; marker-end:url(#arrow-red) !important;}
+  text.step{font-size:10px; fill:#ffd23f; font-weight:700;}
+  .group-label{
+    position:absolute; top:-22px; left:0; font-size:11px; font-weight:700; letter-spacing:.5px;
+    text-transform:uppercase; opacity:.85;
+  }
+  .zoomctl{display:flex; align-items:center; gap:6px; font-size:12px;}
+  .zoomctl button{
+    background:#2a2c34; color:#ddd; border:1px solid #444; border-radius:4px;
+    width:24px; height:24px; cursor:pointer; font-size:14px; line-height:1;
+  }
+  .zoomctl button:hover{background:#3a3c46;}
+  .zoomctl #zoomReset{width:auto; padding:0 8px;}
+  #zoomPct{width:38px; text-align:center; color:#aaa;}
+</style>
+</head>
+<body>
+<header>
+  <h1>TransIt — Ctrl+2 (Region Mode) Call Flow</h1>
+  <div class="legend" id="legend"></div>
+  <div class="hint">Vertical top-to-bottom flow. Drag background = pan. Wheel = zoom. Drag card header = move card. Hover a function = blue in / red out.</div>
+  <div class="zoomctl">
+    <button id="zoomOut">−</button>
+    <span id="zoomPct">100%</span>
+    <button id="zoomIn">+</button>
+    <button id="zoomReset">Reset</button>
+  </div>
+</header>
+<div id="main">
+<div id="flowpanel">
+  <svg id="fc-svg" width="450" height="900">
+    <defs>
+      <marker id="fc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+      </marker>
+      <marker id="fc-arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+      </marker>
+    </defs>
+  </svg>
+</div>
+<div id="wrap">
+<div id="viewport">
+<div id="canvas">
+  <svg id="svg" width="1100" height="1650">
+    <defs>
+      <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+      </marker>
+      <marker id="arrow-yellow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#ffd23f"/>
+      </marker>
+      <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#ff5f5f"/>
+      </marker>
+      <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#4aa8ff"/>
+      </marker>
+    </defs>
+  </svg>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+const FOLDER = {
+  Root:           {c:'var(--c7)'},
+  'Windows/Selection': {c:'var(--c6)'},
+  Modes:          {c:'var(--c3)'},
+  Infrastructure: {c:'var(--c1)'},
+  Core:           {c:'var(--c2)'},
+  'Windows/Overlay': {c:'var(--c6)'},
+  Models:         {c:'var(--c4)'},
+  'Windows/TextPane': {c:'var(--c6)'},
+};
+
+const COL_X = 380;
+const cards = [
+  { id:'App', file:'App.xaml.cs', sub:'TransIt/', folder:'Root', x:COL_X, y:30, fns:[
+    {id:'app_onhotkey', t:'OnHotkey()',
+     desc:'WM_HOTKEY dispatcher: switch(id) Ctrl+2 -> RunRegion(), Alt+2 -> RunSnapshot(), Alt+3 -> ToggleRealtime().'},
+    {id:'app_runregion', t:'RunRegion()',
+     desc:'Checks API key, stops realtime mode if active, runs RegionMode.ActivateAsync on a background Task.'},
+  ]},
+  { id:'RSW', file:'RegionSelectWindow.xaml.cs', sub:'Windows/Selection/', folder:'Windows/Selection', x:COL_X, y:158, fns:[
+    {id:'rsw_show', t:'ctor + Show()',
+     desc:'Creates fullscreen transparent selection window spanning the virtual screen and shows it.'},
+    {id:'rsw_mousedown', t:'MouseLeftButtonDown()',
+     desc:'Captures mouse, starts drag rectangle at click point.'},
+    {id:'rsw_mousemove', t:'MouseMove()',
+     desc:'Resizes the visible selection rectangle as the cursor moves.'},
+    {id:'rsw_mouseup', t:'MouseLeftButtonUp()',
+     desc:'Converts logical drag rect to physical pixels via dpiScale, offsets by virtual-screen origin, stores SelectedRect, closes window.'},
+    {id:'rsw_keydown', t:'KeyDown()', alt:true,
+     desc:'Esc pressed: sets Cancelled=true and closes window without a SelectedRect.'},
+    {id:'rsw_getdpi', t:'GetDpiScale()',
+     desc:'Reads DPI scale for this window\'s HWND via DpiHelper to convert logical px to physical px.'},
+  ]},
+  { id:'RegionMode', file:'RegionMode.cs', sub:'Modes/', folder:'Modes', x:COL_X, y:364, fns:[
+    {id:'rm_activate', t:'ActivateAsync()',
+     desc:'Hides live overlay, shows RegionSelectWindow, awaits close. Router: if(RegionOverlayMode&&useVision)->RunVisionOverlayMode; else if(RegionOverlayMode)->RunOverlayMode; else if(useVision)->RunVisionMode; else->RunTextPaneMode.'},
+    {id:'rm_runoverlay', t:'RunOverlayMode()',
+     desc:'Main path: capture monitor, OCR+translate the selected region, build overlay items, render translated overlay on frozen screenshot.'},
+    {id:'rm_runvisionoverlay', t:'RunVisionOverlayMode()', alt:true,
+     desc:'Alt path (RegionOverlayMode && useVision): runs OCR (for rects) and Vision API (for text) in parallel, matches by index, renders overlay.'},
+    {id:'rm_runtextpane', t:'RunTextPaneMode()', alt:true,
+     desc:'Alt path (!RegionOverlayMode && !useVision): OCR+translate the region, shows plain translated text in a TextPaneWindow instead of an overlay.'},
+    {id:'rm_runvisionmode', t:'RunVisionMode()', alt:true,
+     desc:'Alt path (!RegionOverlayMode && useVision): sends the region image straight to the Vision API, shows result in TextPaneWindow.'},
+    {id:'rm_matchvision', t:'MatchVisionToBlocks()', alt:true,
+     desc:'Zips Vision API paragraphs to OCR blocks by index; extra paragraphs append to the last block.'},
+    {id:'rm_offset', t:'Offset()', alt:true,
+     desc:'Shifts an OCR rect by (bx,by) so block coords map from the cropped region back into the full monitor bitmap.'},
+    {id:'rm_tobitmapsource', t:'ToBitmapSource()', alt:true,
+     desc:'Converts the captured GDI+ Bitmap to a WPF BitmapSource for use as the frozen overlay background.'},
+    {id:'rm_deactivate', t:'Deactivate()', alt:true,
+     desc:'Hides the overlay and closes any active TextPaneWindow when this mode is interrupted by another hotkey.'},
+  ]},
+  { id:'DpiHelper', file:'DpiHelper.cs', sub:'Infrastructure/', folder:'Infrastructure', x:COL_X, y:674, fns:[
+    {id:'dpi_getmonitor', t:'GetMonitorAtPoint(x,y)',
+     desc:'MonitorFromPoint + GetMonitorInfo + GetDpiForMonitor: resolves which monitor the selection center falls on and its DPI scale.'},
+  ]},
+  { id:'ScreenCapture', file:'ScreenCaptureService.cs', sub:'Core/', folder:'Core', x:COL_X, y:776, fns:[
+    {id:'scs_captureregion', t:'CaptureRegion(physRect)',
+     desc:'GDI+ BitBlt of an arbitrary physical-pixel rectangle into a Bitmap.'},
+  ]},
+  { id:'OverlayWindow', file:'OverlayWindow.xaml.cs', sub:'Windows/Overlay/', folder:'Windows/Overlay', x:COL_X, y:878, fns:[
+    {id:'ow_hide', t:'Hide()', alt:true,
+     desc:'Hides any live (click-through) overlay before the region selector is shown.'},
+    {id:'ow_showloading', t:'ShowLoadingOverlay(bg)',
+     desc:'Switches overlay to frozen state: screenshot as background plus a spinner, no text items yet.'},
+    {id:'ow_update', t:'UpdateWithTranslation(items)',
+     desc:'Replaces the spinner with the built OverlayTextItem list, rendering translated text boxes on the frozen background.'},
+    {id:'ow_hideoverlay', t:'HideOverlay()', alt:true,
+     desc:'Error path: hides the frozen overlay if OCR/translation throws.'},
+  ]},
+  { id:'OcrService', file:'OcrService.cs', sub:'Core/', folder:'Core', x:COL_X, y:1058, fns:[
+    {id:'ocr_recognize', t:'RecognizeAsync()',
+     desc:'GDI+ Bitmap -> SoftwareBitmap -> Windows.Media.Ocr engine; returns OCR lines/words with DIP bounding rects.'},
+  ]},
+  { id:'OcrBlock', file:'OcrBlock.cs', sub:'Models/', folder:'Models', x:COL_X, y:1160, fns:[
+    {id:'ocrblock_group', t:'GroupLines(lines)',
+     desc:'Groups OCR lines into paragraph blocks: vertical gap < 1.5x avg line height means same block.'},
+  ]},
+  { id:'TranslationService', file:'TranslationService.cs', sub:'Core/', folder:'Core', x:COL_X, y:1262, fns:[
+    {id:'ts_translate', t:'TranslateAsync(texts)',
+     desc:'Batch-translates all block texts in a single API call (OpenAI JSON-array prompt or Google multi-q request).'},
+    {id:'ts_translateimage', t:'TranslateImageAsync(png)', alt:true,
+     desc:'Vision-API alt path: sends the region screenshot directly to OpenAI Vision for translation, no OCR text needed.'},
+  ]},
+  { id:'OverlayTextItem', file:'OverlayTextItem.cs', sub:'Models/', folder:'Models', x:COL_X, y:1390, fns:[
+    {id:'oti_build', t:'Build()',
+     desc:'Samples bg/fg color from the bitmap, estimates font size via FontSizeEstimator, converts physical rect to logical DIPs for one overlay text item.'},
+  ]},
+  { id:'TextPaneWindow', file:'TextPaneWindow.xaml.cs', sub:'Windows/TextPane/', folder:'Windows/TextPane', x:COL_X, y:1492, fns:[
+    {id:'tpw_showloading', t:'ShowLoading()', alt:true,
+     desc:'Alt path: shows a spinner in the plain text-pane window while OCR/translate/vision is running.'},
+    {id:'tpw_showtranslation', t:'ShowTranslation(blocks)', alt:true,
+     desc:'Alt path: replaces the spinner with the final translated text blocks in the pane.'},
+  ]},
+];
+
+const calls = [
+  { from:'app_onhotkey', to:'app_runregion', step:1,
+    desc:'Ctrl+2 maps to ID_REGION in the switch statement.' },
+  { from:'app_runregion', to:'rm_activate', step:2,
+    desc:'Fire-and-forget Task.Run of RegionMode.ActivateAsync after the API-key check passes.' },
+  { from:'rm_activate', to:'ow_hide', step:null,
+    desc:'Hide any live realtime overlay before showing the fullscreen selector.' },
+  { from:'rm_activate', to:'rsw_show', step:3,
+    desc:'Opens the fullscreen selection window and awaits its Closed event via a TaskCompletionSource.' },
+  { from:'rsw_show', to:'rsw_mousedown', step:null, desc:'User presses mouse button to start dragging a selection box.' },
+  { from:'rsw_mousedown', to:'rsw_mousemove', step:null, desc:'Mouse moves while captured; rectangle resizes live.' },
+  { from:'rsw_mousemove', to:'rsw_mouseup', step:null, desc:'Mouse released, ending the drag.' },
+  { from:'rsw_mouseup', to:'rsw_getdpi', step:null, desc:'Need DPI scale to convert the logical drag rect to physical pixels.' },
+  { from:'rsw_mouseup', to:'rm_activate', step:4,
+    desc:'Window closes; awaited TaskCompletionSource resolves and ActivateAsync reads selector.SelectedRect.' },
+  { from:'rm_activate', to:'rm_runvisionoverlay', step:null,
+    desc:'Router takes this branch when RegionOverlayMode && useVision are both true.' },
+  { from:'rm_activate', to:'rm_runtextpane', step:null,
+    desc:'Router takes this branch when both RegionOverlayMode and useVision are false.' },
+  { from:'rm_activate', to:'rm_runvisionmode', step:null,
+    desc:'Router takes this branch when useVision is true but RegionOverlayMode is false.' },
+  { from:'rm_activate', to:'rm_runoverlay', step:5,
+    desc:'Main path: RegionOverlayMode is true and useVision is false.' },
+
+  { from:'rm_runoverlay', to:'dpi_getmonitor', step:6,
+    desc:'Resolve monitor + DPI from the selection center, not the cursor, in case the cursor moved.' },
+  { from:'rm_runoverlay', to:'scs_captureregion', step:7,
+    desc:'Capture the whole monitor (not just the selection) so the overlay background matches surrounding pixels.' },
+  { from:'rm_runoverlay', to:'rm_tobitmapsource', step:null,
+    desc:'Convert the captured monitor Bitmap into a BitmapSource for the frozen overlay background.' },
+  { from:'rm_runoverlay', to:'ow_showloading', step:8,
+    desc:'Show the frozen background with a spinner while OCR/translation run.' },
+  { from:'rm_runoverlay', to:'rm_offset', step:null,
+    desc:'Offset OCR rects from crop-local coords back into the full monitor bitmap before building overlay items.' },
+  { from:'rm_runoverlay', to:'ocr_recognize', step:9,
+    desc:'Run OCR on just the cropped selection region.' },
+  { from:'rm_runoverlay', to:'ocrblock_group', step:10,
+    desc:'Group OCR lines into paragraph blocks before translating.' },
+  { from:'rm_runoverlay', to:'ts_translate', step:11,
+    desc:'Translate all block texts in a single batched API call.' },
+  { from:'rm_runoverlay', to:'oti_build', step:12,
+    desc:'Build one OverlayTextItem per block, sampling colors/font from the full monitor bitmap.' },
+  { from:'rm_runoverlay', to:'ow_update', step:13,
+    desc:'Swap the spinner for the rendered translated text items.' },
+  { from:'rm_runoverlay', to:'ow_hideoverlay', step:null,
+    desc:'Error path: hide the overlay if OCR or translation throws.' },
+
+  { from:'rm_runvisionoverlay', to:'dpi_getmonitor', step:null, desc:'Same monitor/DPI resolution as the overlay path.' },
+  { from:'rm_runvisionoverlay', to:'scs_captureregion', step:null, desc:'Capture the monitor for the background.' },
+  { from:'rm_runvisionoverlay', to:'ow_showloading', step:null, desc:'Show frozen background + spinner.' },
+  { from:'rm_runvisionoverlay', to:'rm_offset', step:null, desc:'Offset OCR rects back into the monitor bitmap.' },
+  { from:'rm_runvisionoverlay', to:'ocr_recognize', step:null, desc:'OCR runs in parallel with the Vision API call to get bounding rects.' },
+  { from:'rm_runvisionoverlay', to:'ts_translateimage', step:null, desc:'Vision API runs in parallel with OCR to get translated text directly from the image.' },
+  { from:'rm_runvisionoverlay', to:'ocrblock_group', step:null, desc:'Group OCR lines once both parallel tasks complete.' },
+  { from:'rm_runvisionoverlay', to:'rm_matchvision', step:null, desc:'Zip Vision API paragraphs to OCR blocks by index.' },
+  { from:'rm_runvisionoverlay', to:'oti_build', step:null, desc:'Build overlay items using the matched vision text.' },
+  { from:'rm_runvisionoverlay', to:'ow_update', step:null, desc:'Render the vision-translated overlay.' },
+  { from:'rm_runvisionoverlay', to:'ow_hideoverlay', step:null, desc:'Error path for the vision-overlay branch.' },
+
+  { from:'rm_runtextpane', to:'scs_captureregion', step:null, desc:'Capture just the selected region (no overlay background needed).' },
+  { from:'rm_runtextpane', to:'tpw_showloading', step:null, desc:'Show a plain loading pane instead of a screen overlay.' },
+  { from:'rm_runtextpane', to:'ocr_recognize', step:null, desc:'OCR the captured region.' },
+  { from:'rm_runtextpane', to:'ocrblock_group', step:null, desc:'Group lines into blocks.' },
+  { from:'rm_runtextpane', to:'ts_translate', step:null, desc:'Translate block texts.' },
+  { from:'rm_runtextpane', to:'tpw_showtranslation', step:null, desc:'Display the translated text in the pane.' },
+
+  { from:'rm_runvisionmode', to:'scs_captureregion', step:null, desc:'Capture the selected region to send to the Vision API.' },
+  { from:'rm_runvisionmode', to:'tpw_showloading', step:null, desc:'Show loading pane while the Vision API call runs.' },
+  { from:'rm_runvisionmode', to:'ts_translateimage', step:null, desc:'No OCR at all in this path — Vision API does everything.' },
+  { from:'rm_runvisionmode', to:'tpw_showtranslation', step:null, desc:'Display the Vision API result.' },
+];
+
+const fcNodes = [
+  {type:'term', h:40, lines:['Start: Ctrl+2 pressed']},
+  {type:'proc', h:40, step:1, lines:['OnHotkey() routes to RunRegion()']},
+  {type:'proc', h:44, step:2, lines:['RunRegion() -> RegionMode.ActivateAsync()']},
+  {type:'proc', h:54, step:3, lines:['Show RegionSelectWindow,','await drag-select or Esc']},
+  {type:'proc', h:44, step:4, lines:['Selector closed -> read SelectedRect']},
+  {type:'dec',  h:84, lines:['RegionOverlayMode &&','useVision ?'],
+    alt:{w:170, h:120, lines:['else branches:','RunVisionOverlayMode()','RunTextPaneMode()','RunVisionMode()']}},
+  {type:'proc', h:40, step:5, lines:['RunOverlayMode() (main path)']},
+  {type:'proc', h:44, step:6, lines:['DpiHelper.GetMonitorAtPoint()']},
+  {type:'proc', h:40, step:7, lines:['ScreenCaptureService.CaptureRegion()']},
+  {type:'proc', h:40, step:8, lines:['OverlayWindow.ShowLoadingOverlay()']},
+  {type:'proc', h:40, step:9, lines:['OcrService.RecognizeAsync()']},
+  {type:'proc', h:40, step:10, lines:['OcrBlock.GroupLines()']},
+  {type:'proc', h:40, step:11, lines:['TranslationService.TranslateAsync()']},
+  {type:'proc', h:40, step:12, lines:['OverlayTextItem.Build()']},
+  {type:'proc', h:40, step:13, lines:['OverlayWindow.UpdateWithTranslation()']},
+  {type:'term', h:40, lines:['End: translated overlay shown']},
+];
+
+const TITLE_TEXT = document.title;
+
+(function(){
+  const legend = document.getElementById('legend');
+  Object.entries(FOLDER).forEach(([name,f])=>{
+    const span = document.createElement('span');
+    span.innerHTML = `<i style="background:${f.c}"></i>${name}`;
+    legend.appendChild(span);
+  });
+})();
+
+const CARD_W = 210, ROW_H = 26, HDR_H = 36;
+
+const cardById = {}; cards.forEach(c=>cardById[c.id]=c);
+const fnLoc = {};
+cards.forEach(c=>c.fns.forEach((f,i)=>{ fnLoc[f.id]={card:c, idx:i}; }));
+
+function cardHeight(c){ return HDR_H + c.fns.length*ROW_H; }
+
+function portXY(fnId, side){
+  const loc = fnLoc[fnId];
+  const y = loc.card.y + HDR_H + loc.idx*ROW_H + ROW_H/2;
+  const x = side==='l' ? loc.card.x : loc.card.x + CARD_W;
+  return [x,y];
+}
+
+const canvas = document.getElementById('canvas');
+const cardDiv = {};
+
+cards.forEach(c=>{
+  const f = FOLDER[c.folder] || {c:'#888'};
+  const div = document.createElement('div');
+  div.className='card';
+  div.style.left=c.x+'px'; div.style.top=c.y+'px';
+  div.style.borderColor=f.c;
+  div.style.height = (HDR_H + c.fns.length*ROW_H)+'px';
+  div.innerHTML = `<div class="group-label" style="color:${f.c}">${c.folder}</div>
+    <div class="hdr" style="background:${f.c}">${c.file}<small>${c.sub||''}</small></div>`;
+  c.fns.forEach(fn=>{
+    const row = document.createElement('div');
+    row.className='fn'+(fn.alt?' alt':'')+(fn.desc?' has-desc':'');
+    row.dataset.id = fn.id;
+    if(fn.desc) row.title = fn.desc;
+    row.innerHTML = `<span class="port l" data-id="${fn.id}"></span>${fn.t}<span class="port r" data-id="${fn.id}"></span>`;
+    div.appendChild(row);
+  });
+  canvas.appendChild(div);
+  cardDiv[c.id]=div;
+});
+
+const svg = document.getElementById('svg');
+const edgeEls = [];
+calls.forEach(call=>{
+  const isSelfLoop = fnLoc[call.from].card === fnLoc[call.to].card;
+  const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('class','edge'+(call.step?' main':'')+(isSelfLoop?' selfloop':''));
+  path.setAttribute('pointer-events', call.desc ? 'stroke' : 'none');
+  path.dataset.from=call.from; path.dataset.to=call.to;
+  if(call.desc){
+    const title = document.createElementNS('http://www.w3.org/2000/svg','title');
+    title.textContent = call.desc;
+    path.appendChild(title);
+  }
+  svg.appendChild(path);
+  let text=null;
+  if(call.step){
+    text = document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.setAttribute('class','step');
+    text.textContent = call.step;
+    svg.appendChild(text);
+  }
+  edgeEls.push({call, path, text});
+});
+
+function roundedPath(points, r){
+  let d = `M${points[0][0]},${points[0][1]}`;
+  for(let i=1;i<points.length-1;i++){
+    const [x0,y0]=points[i-1], [x1,y1]=points[i], [x2,y2]=points[i+1];
+    const d1 = Math.hypot(x1-x0,y1-y0)||1, d2 = Math.hypot(x2-x1,y2-y1)||1;
+    const r1 = Math.min(r, d1/2), r2 = Math.min(r, d2/2);
+    const xa = x1-(x1-x0)/d1*r1, ya = y1-(y1-y0)/d1*r1;
+    const xb = x1+(x2-x1)/d2*r2, yb = y1+(y2-y1)/d2*r2;
+    d += ` L${xa},${ya} Q${x1},${y1} ${xb},${yb}`;
+  }
+  const last = points[points.length-1];
+  d += ` L${last[0]},${last[1]}`;
+  return d;
+}
+
+const CORNER_R = 8;
+const BASE_MAIN = 18;
+const BASE_ALT  = 40;
+const LANE_STEP = 20;
+const PAD = 10;
+
+const rightLanes = [];
+const leftLanes  = [];
+let rightUsed = 0, leftUsed = 0;
+
+function claimLane(lanes, minY, maxY){
+  for(let i=0;i<lanes.length;i++){
+    const free = !lanes[i].some(iv => !(maxY < iv.min - PAD || minY > iv.max + PAD));
+    if(free){ lanes[i].push({min:minY,max:maxY}); return i; }
+  }
+  lanes.push([{min:minY,max:maxY}]);
+  return lanes.length-1;
+}
+
+const crossCardEdges = edgeEls
+  .filter(e => fnLoc[e.call.from].card !== fnLoc[e.call.to].card)
+  .map(e => {
+    const [,y1] = portXY(e.call.from,'r'), [,y2] = portXY(e.call.to,'r');
+    return {e, minY:Math.min(y1,y2), maxY:Math.max(y1,y2), span:Math.abs(y2-y1)};
+  })
+  .sort((a,b) => a.span - b.span);
+
+crossCardEdges.forEach(({e, minY, maxY}) => {
+  const side = rightUsed <= leftUsed ? 'r' : 'l';
+  const lanes = side==='r' ? rightLanes : leftLanes;
+  const lane = claimLane(lanes, minY, maxY);
+  e.call.side = side; e.call.lane = lane;
+  if(side==='r') rightUsed++; else leftUsed++;
+});
+
+function routeEdge(x1, y1, x2, y2, laneX){
+  return roundedPath([[x1,y1],[laneX,y1],[laneX,y2],[x2,y2]], CORNER_R);
+}
+
+function selfLoopPath(card, fromId, toId){
+  const [x1,y1] = portXY(fromId,'r');
+  const [x2,y2] = portXY(toId,'l');
+  const outX = x1 + 30, inX = x2 - 30;
+  const belowY = card.y + cardHeight(card) + 22;
+  return roundedPath([[x1,y1],[outX,y1],[outX,belowY],[inX,belowY],[inX,y2],[x2,y2]], CORNER_R);
+}
+
+function redrawEdges(){
+  edgeEls.forEach(({call,path,text})=>{
+    const fromCard = fnLoc[call.from].card, toCard = fnLoc[call.to].card;
+    if(fromCard === toCard){
+      path.setAttribute('d', selfLoopPath(fromCard, call.from, call.to));
+      if(text){
+        const [x1,y1] = portXY(call.from,'r');
+        text.setAttribute('x', x1 + 16);
+        text.setAttribute('y', y1 - 6);
+      }
+      return;
+    }
+    const base = call.step ? BASE_MAIN : BASE_ALT;
+    const offset = base + call.lane*LANE_STEP;
+    const port = call.side==='r' ? 'r' : 'l';
+    const [x1,y1] = portXY(call.from, port);
+    const [x2,y2] = portXY(call.to, port);
+    const laneX = call.side==='r' ? x1 + offset : x1 - offset;
+    path.setAttribute('d', routeEdge(x1,y1,x2,y2,laneX));
+    if(text){
+      text.setAttribute('x', call.side==='r' ? laneX + 8 : laneX - 8);
+      text.setAttribute('y', (y1+y2)/2);
+    }
+  });
+}
+redrawEdges();
+
+let dragCard=null, dragStart=null;
+cards.forEach(c=>{
+  const hdr = cardDiv[c.id].querySelector('.hdr');
+  hdr.addEventListener('mousedown', e=>{
+    e.stopPropagation();
+    dragCard=c;
+    cardDiv[c.id].classList.add('dragging');
+    dragStart = {mx:e.clientX, my:e.clientY, cx:c.x, cy:c.y};
+  });
+});
+window.addEventListener('mousemove', e=>{
+  if(!dragCard) return;
+  const dx = (e.clientX - dragStart.mx)/scale;
+  const dy = (e.clientY - dragStart.my)/scale;
+  dragCard.x = dragStart.cx + dx;
+  dragCard.y = dragStart.cy + dy;
+  const div = cardDiv[dragCard.id];
+  div.style.left = dragCard.x+'px';
+  div.style.top  = dragCard.y+'px';
+  redrawEdges();
+});
+window.addEventListener('mouseup', ()=>{
+  if(dragCard){ cardDiv[dragCard.id].classList.remove('dragging'); dragCard=null; }
+});
+
+const wrap = document.getElementById('wrap');
+const viewport = document.getElementById('viewport');
+let scale=1, panX=0, panY=0;
+const zoomPct = document.getElementById('zoomPct');
+
+function applyTransform(){
+  viewport.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  zoomPct.textContent = Math.round(scale*100)+'%';
+}
+
+function setZoom(newScale, cx, cy){
+  newScale = Math.min(2.5, Math.max(0.3, newScale));
+  panX = cx - (cx - panX) * (newScale/scale);
+  panY = cy - (cy - panY) * (newScale/scale);
+  scale = newScale;
+  applyTransform();
+}
+
+wrap.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const rect = wrap.getBoundingClientRect();
+  const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+  setZoom(scale*factor, cx, cy);
+}, {passive:false});
+
+document.getElementById('zoomIn').onclick = ()=> setZoom(scale*1.2, wrap.clientWidth/2, wrap.clientHeight/2);
+document.getElementById('zoomOut').onclick = ()=> setZoom(scale/1.2, wrap.clientWidth/2, wrap.clientHeight/2);
+document.getElementById('zoomReset').onclick = ()=>{ scale=1; panX=0; panY=0; applyTransform(); };
+
+let panDrag=null;
+wrap.addEventListener('mousedown', e=>{
+  if(dragCard) return;
+  if(e.target.closest('.card')) return;
+  panDrag = {mx:e.clientX, my:e.clientY, px:panX, py:panY};
+  wrap.classList.add('panning');
+});
+window.addEventListener('mousemove', e=>{
+  if(!panDrag) return;
+  panX = panDrag.px + (e.clientX - panDrag.mx);
+  panY = panDrag.py + (e.clientY - panDrag.my);
+  applyTransform();
+});
+window.addEventListener('mouseup', ()=>{
+  if(panDrag){ panDrag=null; wrap.classList.remove('panning'); }
+});
+
+document.querySelectorAll('.fn').forEach(row=>{
+  row.addEventListener('mouseenter', ()=>{
+    const id = row.dataset.id;
+    document.querySelectorAll(`path[data-from="${id}"]`).forEach(p=>p.classList.add('hl-out'));
+    document.querySelectorAll(`path[data-to="${id}"]`).forEach(p=>{
+      p.classList.add(p.classList.contains('selfloop') ? 'hl-out' : 'hl-in');
+    });
+    document.querySelectorAll(`.port[data-id="${id}"]`).forEach(p=>p.classList.add('active'));
+    row.classList.add('hl');
+  });
+  row.addEventListener('mouseleave', ()=>{
+    const id = row.dataset.id;
+    document.querySelectorAll(`path[data-from="${id}"], path[data-to="${id}"]`).forEach(p=>p.classList.remove('hl-in','hl-out'));
+    document.querySelectorAll(`.port[data-id="${id}"]`).forEach(p=>p.classList.remove('active'));
+    row.classList.remove('hl');
+  });
+});
+
+(function(){
+  const FC_CX = 220, FC_ALT_CX = 380, FC_W = 190, GAP = 16;
+  const fcSvg = document.getElementById('fc-svg');
+
+  let y = 20;
+  const laidOut = fcNodes.map(n=>{
+    const ny = y;
+    y += n.h + GAP;
+    return {...n, y:ny};
+  });
+  const totalH = y + 20;
+  fcSvg.setAttribute('height', totalH);
+  fcSvg.setAttribute('viewBox', `0 0 470 ${totalH}`);
+
+  function fcText(x,y,lines,cls){
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('class', cls);
+    t.setAttribute('x', x);
+    const lh = 13;
+    const startY = y - (lines.length-1)*lh/2;
+    lines.forEach((line,i)=>{
+      const tspan = document.createElementNS('http://www.w3.org/2000/svg','tspan');
+      tspan.setAttribute('x', x);
+      tspan.setAttribute('y', startY + i*lh);
+      tspan.textContent = line;
+      t.appendChild(tspan);
+    });
+    return t;
+  }
+
+  function fcArrow(x1,y1,x2,y2,alt){
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('class', 'fc-arrowline'+(alt?' fc-alt-line':''));
+    p.setAttribute('marker-end', alt ? 'url(#fc-arrow-gray)' : 'url(#fc-arrow)');
+    p.setAttribute('d', `M${x1},${y1} L${x2},${y2}`);
+    fcSvg.appendChild(p);
+  }
+
+  laidOut.forEach((n,i)=>{
+    const cy = n.y + n.h/2;
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    if(n.type==='term'){
+      const el = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+      el.setAttribute('class','fc-term');
+      el.setAttribute('cx', FC_CX); el.setAttribute('cy', cy);
+      el.setAttribute('rx', FC_W/2); el.setAttribute('ry', n.h/2);
+      g.appendChild(el);
+      g.appendChild(fcText(FC_CX, cy, n.lines, 'fc-label fc-term-label'));
+    } else if(n.type==='dec'){
+      const w = FC_W, h = n.h;
+      const pts = [[FC_CX, n.y],[FC_CX+w/2, cy],[FC_CX, n.y+h],[FC_CX-w/2, cy]].map(p=>p.join(',')).join(' ');
+      const el = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      el.setAttribute('class','fc-dec');
+      el.setAttribute('points', pts);
+      g.appendChild(el);
+      g.appendChild(fcText(FC_CX, cy, n.lines, 'fc-label'));
+    } else {
+      const el = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      el.setAttribute('class','fc-rect');
+      el.setAttribute('x', FC_CX-FC_W/2); el.setAttribute('y', n.y);
+      el.setAttribute('width', FC_W); el.setAttribute('height', n.h);
+      el.setAttribute('rx', 4);
+      g.appendChild(el);
+      g.appendChild(fcText(FC_CX, cy, n.lines, 'fc-label'));
+      if(n.step){
+        const badge = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        badge.setAttribute('class','fc-badge');
+        badge.setAttribute('cx', FC_CX-FC_W/2+10); badge.setAttribute('cy', n.y+10); badge.setAttribute('r', 9);
+        g.appendChild(badge);
+        const bt = document.createElementNS('http://www.w3.org/2000/svg','text');
+        bt.setAttribute('class','fc-badge-text');
+        bt.setAttribute('x', FC_CX-FC_W/2+10); bt.setAttribute('y', n.y+11);
+        bt.textContent = n.step;
+        g.appendChild(bt);
+      }
+    }
+    fcSvg.appendChild(g);
+
+    if(i>0) fcArrow(FC_CX, laidOut[i-1].y+laidOut[i-1].h, FC_CX, n.y, false);
+
+    if(n.alt){
+      const aw = n.alt.w, ah = n.alt.h, ax = FC_ALT_CX, ay = n.y + n.h/2 - ah/2;
+      const ael = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      ael.setAttribute('class','fc-rect fc-alt');
+      ael.setAttribute('x', ax-aw/2); ael.setAttribute('y', ay);
+      ael.setAttribute('width', aw); ael.setAttribute('height', ah);
+      ael.setAttribute('rx', 4);
+      fcSvg.appendChild(ael);
+      fcSvg.appendChild(fcText(ax, ay+ah/2, n.alt.lines, 'fc-label'));
+      fcArrow(FC_CX+FC_W/2, cy, ax-aw/2, ay+ah/2, true);
+    }
+  });
+})();
+</script>
+</body>
+</html>

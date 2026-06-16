@@ -38,9 +38,9 @@ public partial class OverlayCanvas : UserControl
             var border = new Border
             {
                 Background = new SolidColorBrush(item.BackgroundColor),
-                Width  = item.ScreenRect.Width,
-                Height = item.ScreenRect.Height,
-                ClipToBounds = true
+                Width = item.ScreenRect.Width,
+                // No fixed Height — translated text may be longer than the OCR source box;
+                // clipping it causes paragraphs to appear missing.
             };
 
             var tb = new TextBlock

@@ -28,8 +28,10 @@ public class SnapshotMode : ITranslationMode
         Application.Current.Dispatcher.Invoke(() => _overlay.Hide());
         await Task.Delay(150, ct);
 
-        using var bitmap = ScreenCaptureService.CaptureFullScreen();
-        double dpiScale = GetPrimaryDpiScale();
+        var capture = ScreenCaptureService.CaptureMonitorAtCursor();
+        using var bitmap = capture.bitmap;
+        double dpiScale = capture.dpiScale;
+        var monRect = capture.monRect;
 
         var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(bitmap));
 
@@ -45,11 +47,19 @@ public class SnapshotMode : ITranslationMode
         var translated = await _translator.TranslateAsync(texts,
             _settings.SourceLanguage, _settings.TargetLanguage, ct);
 
+        // Monitor-relative DIPs → virtual-screen DIPs so the canvas (spanning all monitors) positions items correctly.
+        double monLogX = monRect.Left / dpiScale;
+        double monLogY = monRect.Top  / dpiScale;
+
         var items = new List<OverlayTextItem>();
         for (int i = 0; i < blocks.Count; i++)
         {
             var text = string.IsNullOrWhiteSpace(translated[i]) ? blocks[i].FullText : translated[i];
-            items.Add(OverlayTextItem.Build(blocks[i], text, bitmap, dpiScale));
+            var item = OverlayTextItem.Build(blocks[i], text, bitmap, dpiScale);
+            item.ScreenRect = new System.Windows.Rect(
+                item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
+                item.ScreenRect.Width, item.ScreenRect.Height);
+            items.Add(item);
         }
 
         Application.Current.Dispatcher.Invoke(() => _overlay.ShowFrozenOverlay(items, background));
@@ -80,5 +90,4 @@ public class SnapshotMode : ITranslationMode
     public void Deactivate() =>
         Application.Current.Dispatcher.Invoke(() => _overlay.Hide());
 
-    private static double GetPrimaryDpiScale() => DpiHelper.GetPrimaryDpiScale();
 }
