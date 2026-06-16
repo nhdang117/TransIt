@@ -16,15 +16,17 @@ namespace TransIt.Modes;
 public class RegionMode : ITranslationMode
 {
     private readonly OcrService _ocr;
+    private readonly LayoutService _layout;
     private readonly TranslationService _translator;
     private readonly AppSettings _settings;
     private readonly OverlayWindow _overlay;
     private TextPaneWindow? _activePane;
 
-    public RegionMode(OcrService ocr, TranslationService translator,
+    public RegionMode(OcrService ocr, LayoutService layout, TranslationService translator,
                       AppSettings settings, OverlayWindow overlay)
     {
         _ocr = ocr;
+        _layout = layout;
         _translator = translator;
         _settings = settings;
         _overlay = overlay;
@@ -93,7 +95,7 @@ public class RegionMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
-            var blocks = OcrBlock.GroupLines(lines);
+            var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct);
             var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var translatedById = await _translator.TranslateBlocksAsync(translatable,
@@ -144,7 +146,7 @@ public class RegionMode : ITranslationMode
                 return;
             }
 
-            var blocks = OcrBlock.GroupLines(lines);
+            var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct);
             var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var translatedById = await _translator.TranslateBlocksAsync(translatable,
@@ -208,7 +210,7 @@ public class RegionMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
-            var blocks      = OcrBlock.GroupLines(lines);
+            var blocks      = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct);
             var visionTexts = visionTask.Result;
             var matched     = MatchVisionToBlocks(blocks, visionTexts);
 

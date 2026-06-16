@@ -61,10 +61,14 @@ public partial class OverlayCanvas : UserControl
     }
 
     // Ctrl+1 test mode: yellow = raw PaddleOCR line boxes, red = paragraph blocks
-    // (OcrBlock.GroupLines combining nearby lines).
-    public void RenderDebugRects(IList<Rect> lineRects, IList<Rect> blockRects)
+    // (OcrBlock.GroupLines/GroupLinesWithLayout), cyan dashed = detected PP-Structure
+    // layout regions (Text/Title/List/Table/Figure).
+    public void RenderDebugRects(IList<Rect> lineRects, IList<Rect> blockRects, IList<Rect>? regionRects = null)
     {
         DebugLayer.Children.Clear();
+
+        foreach (var r in regionRects ?? [])
+            DebugLayer.Children.Add(MakeRect(r, Colors.Cyan, 3, dashed: true));
 
         foreach (var r in lineRects)
             DebugLayer.Children.Add(MakeRect(r, Colors.Yellow, 1));
@@ -73,7 +77,7 @@ public partial class OverlayCanvas : UserControl
             DebugLayer.Children.Add(MakeRect(r, Colors.Red, 2));
     }
 
-    private static System.Windows.Shapes.Rectangle MakeRect(Rect r, Color stroke, double thickness)
+    private static System.Windows.Shapes.Rectangle MakeRect(Rect r, Color stroke, double thickness, bool dashed = false)
     {
         var shape = new System.Windows.Shapes.Rectangle
         {
@@ -83,6 +87,7 @@ public partial class OverlayCanvas : UserControl
             StrokeThickness = thickness,
             Fill = Brushes.Transparent,
         };
+        if (dashed) shape.StrokeDashArray = [4, 2];
         Canvas.SetLeft(shape, r.X);
         Canvas.SetTop(shape, r.Y);
         return shape;

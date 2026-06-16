@@ -63,15 +63,17 @@ public partial class OverlayWindow : Window
         InstallEscHook();
     }
 
-    /// Ctrl+1 test mode: shows raw PaddleOCR line boxes (yellow) and combined
-    /// paragraph blocks (red) over a frozen screenshot, no translation involved.
-    public void ShowDebugOverlay(IList<Rect> lineRects, IList<Rect> blockRects, BitmapSource background)
+    /// Ctrl+1 test mode: shows raw PaddleOCR line boxes (yellow), combined
+    /// paragraph blocks (red), and detected layout regions (cyan dashed) over a
+    /// frozen screenshot, no translation involved.
+    public void ShowDebugOverlay(IList<Rect> lineRects, IList<Rect> blockRects, BitmapSource background,
+                                  IList<Rect>? regionRects = null)
     {
         PositionOnVirtualScreen();
         Canvas.SetFrozenBackground(background);
         Canvas.ShowLoading(false);
         Canvas.RenderItems([]);
-        Canvas.RenderDebugRects(lineRects, blockRects);
+        Canvas.RenderDebugRects(lineRects, blockRects, regionRects);
         Canvas.ShowAnnotationToolbar(false);
         _annotationMode = false;
         SetClickThrough(false);

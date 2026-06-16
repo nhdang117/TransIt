@@ -74,7 +74,6 @@
                 <TextBlock x:Name="LblInterval" Margin="8,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
 
-
             <!-- Region Display Mode -->
             <TextBlock Text="Region Result Display" FontWeight="SemiBold" Margin="0,12,0,4"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">

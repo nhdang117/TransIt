@@ -15,6 +15,7 @@ public partial class App : Application
     private TrayIconManager _tray = null!;
     private OverlayWindow _overlay = null!;
     private OcrService _ocr = null!;
+    private LayoutService _layout = null!;
     private TranslationService _translator = null!;
 
     private SnapshotMode?  _snapshotMode;
@@ -31,13 +32,14 @@ public partial class App : Application
 
         _settings   = AppSettings.Load();
         _ocr        = new OcrService();
+        _layout     = new LayoutService();
         _translator = new TranslationService(_settings);
         _overlay    = new OverlayWindow();
 
-        _snapshotMode = new SnapshotMode(_ocr, _translator, _settings, _overlay);
-        _regionMode   = new RegionMode(_ocr, _translator, _settings, _overlay);
-        _realtimeMode = new RealtimeMode(_ocr, _translator, _settings, _overlay);
-        _ocrDebugMode = new OcrDebugMode(_ocr, _settings, _overlay);
+        _snapshotMode = new SnapshotMode(_ocr, _layout, _translator, _settings, _overlay);
+        _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
+        _realtimeMode = new RealtimeMode(_ocr, _layout, _translator, _settings, _overlay);
+        _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
 
         _tray = new TrayIconManager();
         _tray.SnapshotRequested       += (_, _) => RunSnapshot();
@@ -148,10 +150,10 @@ public partial class App : Application
         win.ShowDialog();
         // Recreate translator with updated settings
         _translator = new TranslationService(_settings);
-        _snapshotMode = new SnapshotMode(_ocr, _translator, _settings, _overlay);
-        _regionMode   = new RegionMode(_ocr, _translator, _settings, _overlay);
-        _realtimeMode = new RealtimeMode(_ocr, _translator, _settings, _overlay);
-        _ocrDebugMode = new OcrDebugMode(_ocr, _settings, _overlay);
+        _snapshotMode = new SnapshotMode(_ocr, _layout, _translator, _settings, _overlay);
+        _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
+        _realtimeMode = new RealtimeMode(_ocr, _layout, _translator, _settings, _overlay);
+        _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
     }
 
     private bool CheckApiKey()
@@ -170,6 +172,7 @@ public partial class App : Application
         _hotkeys.Dispose();
         _tray.Dispose();
         _ocr.Dispose();
+        _layout.Dispose();
         _settings.Save();
         base.OnExit(e);
     }

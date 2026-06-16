@@ -11,13 +11,15 @@ namespace TransIt.Modes;
 public class SnapshotMode : ITranslationMode
 {
     private readonly OcrService _ocr;
+    private readonly LayoutService _layout;
     private readonly TranslationService _translator;
     private readonly AppSettings _settings;
     private readonly OverlayWindow _overlay;
-    public SnapshotMode(OcrService ocr, TranslationService translator,
+    public SnapshotMode(OcrService ocr, LayoutService layout, TranslationService translator,
                         AppSettings settings, OverlayWindow overlay)
     {
         _ocr = ocr;
+        _layout = layout;
         _translator = translator;
         _settings = settings;
         _overlay = overlay;
@@ -42,7 +44,7 @@ public class SnapshotMode : ITranslationMode
             return;
         }
 
-        var blocks = OcrBlock.GroupLines(lines);
+        var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, bitmap, ct);
         var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
             i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
         var translatedById = await _translator.TranslateBlocksAsync(translatable,

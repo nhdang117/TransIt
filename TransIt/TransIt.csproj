@@ -17,10 +17,20 @@
     <PackageReference Include="System.Text.Json" Version="9.0.5" />
     <PackageReference Include="PaddleOCRSharp" Version="6.2.0" />
     <PackageReference Include="Paddle.Runtime.win_x64" Version="3.3.0.1" />
+    <PackageReference Include="Sdcb.PaddleDetection" Version="2.3.3.1" />
+    <PackageReference Include="Sdcb.PaddleInference.runtime.win64.mkl" Version="2.5.1" />
+    <PackageReference Include="OpenCvSharp4" Version="4.10.0.20241108" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20241108" />
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Resources\tray_icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Assets\LayoutModel\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

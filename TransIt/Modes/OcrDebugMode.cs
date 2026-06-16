@@ -20,13 +20,15 @@ public class OcrDebugMode : ITranslationMode
     private static readonly JsonSerializerOptions _jsonOpts = new() { WriteIndented = true };
 
     private readonly OcrService _ocr;
+    private readonly LayoutService _layout;
     private readonly AppSettings _settings;
     private readonly OverlayWindow _overlay;
     private TextPaneWindow? _activePane;
 
-    public OcrDebugMode(OcrService ocr, AppSettings settings, OverlayWindow overlay)
+    public OcrDebugMode(OcrService ocr, LayoutService layout, AppSettings settings, OverlayWindow overlay)
     {
         _ocr = ocr;
+        _layout = layout;
         _settings = settings;
         _overlay = overlay;
     }
@@ -83,7 +85,19 @@ public class OcrDebugMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
-            var blocks = OcrBlock.GroupLines(lines);
+            // Run layout detection directly (not via LayoutGrouping's silent-fallback
+            // wrapper) so we can see exactly what the detector returned/threw.
+            List<LayoutRegion> regions = [];
+            string? layoutError = null;
+            if (_layout != null)
+            {
+                try { regions = await _layout.DetectAsync(regionBitmap, ct); }
+                catch (Exception ex) { layoutError = ex.Message; }
+            }
+
+            var blocks = regions.Count > 0
+                ? OcrBlock.GroupLinesWithLayout(lines, regions)
+                : OcrBlock.GroupLines(lines);
 
             double monLogX = monRect.Left / dpiScale;
             double monLogY = monRect.Top  / dpiScale;
@@ -92,8 +106,9 @@ public class OcrDebugMode : ITranslationMode
                 physical.X / dpiScale + monLogX, physical.Y / dpiScale + monLogY,
                 physical.Width / dpiScale, physical.Height / dpiScale);
 
-            var lineRects  = lines.Select(l => ToLogical(l.BoundingRect)).ToList();
-            var blockRects = blocks.Select(b => ToLogical(b.BoundingRect)).ToList();
+            var lineRects   = lines.Select(l => ToLogical(l.BoundingRect)).ToList();
+            var blockRects  = blocks.Select(b => ToLogical(b.BoundingRect)).ToList();
+            var regionRects = regions.Select(r => ToLogical(r.BoundingRect)).ToList();
 
             // Same shape RegionMode/SnapshotMode/RealtimeMode build right before calling
             // TranslationService.TranslateBlocksAsync — physical-pixel rect, not logical DIPs.
@@ -101,15 +116,23 @@ public class OcrDebugMode : ITranslationMode
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var payloadJson = JsonSerializer.Serialize(translatable, _jsonOpts);
 
+            var diagLines = new List<string>
+            {
+                $"Layout regions detected: {regions.Count}" + (layoutError != null ? $" (ERROR: {layoutError})" : ""),
+            };
+            diagLines.AddRange(regions.Select(r =>
+                $"  [{r.Category}] conf={r.Confidence:F2} rect={r.BoundingRect}"));
+            diagLines.Add(payloadJson);
+
             Application.Current.Dispatcher.Invoke(() =>
             {
-                _overlay.ShowDebugOverlay(lineRects, blockRects, background);
+                _overlay.ShowDebugOverlay(lineRects, blockRects, background, regionRects);
 
                 var pane = new TextPaneWindow();
                 _activePane = pane;
                 pane.Closed += (_, _) => { if (_activePane == pane) _activePane = null; };
                 pane.ShowLoading();
-                pane.ShowTranslation([payloadJson]);
+                pane.ShowTranslation([string.Join("\n", diagLines)]);
             });
         }
         catch
