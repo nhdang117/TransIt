@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Windows;
 using TransIt.Core;
+using TransIt.Services;
 using TransIt.Windows.Selection;
 using TransIt.Windows.TextPane;
 using TransIt.Infrastructure;
@@ -123,16 +124,20 @@ public class SummaryMode : ITranslationMode
         int cursorX = physRect.X + physRect.Width  / 2;
         int cursorY = physRect.Y + physRect.Height / 2;
 
-        // Pre-build single-notch scroll input (reused every tick).
+        // Pre-build 3-notch scroll input (reused every tick).
+        // 3 notches per tick ensures PDF viewers move enough for the 16×16 hash to detect change.
         var scrollInput = new NativeMethods.INPUT[1];
         scrollInput[0].type = NativeMethods.INPUT_MOUSE;
         scrollInput[0].mi.dwFlags = NativeMethods.MOUSEEVENTF_WHEEL;
-        scrollInput[0].mi.mouseData = unchecked((uint)(-NativeMethods.WHEEL_DELTA));
+        scrollInput[0].mi.mouseData = unchecked((uint)(-3 * NativeMethods.WHEEL_DELTA));
         int inputSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.INPUT>();
 
-        // Capture overlap threshold: ~20% overlap ≈ 80% content changed.
-        // Practical max Hamming for text content is ~32; 30 ≈ 80% new content.
-        const int OverlapThreshold = 30;
+        // Duplicate skip threshold: frames that differ by < 5 bits are essentially identical.
+        const int DuplicateThreshold = 5;
+
+        // Bottom detection: require 3 consecutive stable ticks to avoid false positives
+        // from animated scroll or slow rendering in PDF viewers.
+        const int StableFramesRequired = 3;
 
         // Capture first frame unconditionally.
         using (var first = ScreenCaptureService.CaptureRegion(physRect))
@@ -146,35 +151,47 @@ public class SummaryMode : ITranslationMode
         using (var tmp = ScreenCaptureService.CaptureRegion(physRect))
             lastCapturedHash = ComputeHash(tmp);
         ulong prevTickHash = lastCapturedHash;
+        int stableCount = 0;
 
         while (!barTcs.Task.IsCompleted && !ct.IsCancellationRequested)
         {
-            // Scroll one notch.
+            // Scroll 3 notches.
             NativeMethods.SetCursorPos(cursorX, cursorY);
             NativeMethods.SendInput(1, scrollInput, inputSize);
 
-            try { await Task.Delay(50, ct); }
+            // 200ms gives PDF viewers (Foxit, Acrobat) time to finish animated scroll + render.
+            try { await Task.Delay(200, ct); }
             catch { break; }
 
             using var frame = ScreenCaptureService.CaptureRegion(physRect);
             ulong hash = ComputeHash(frame);
 
-            // Bottom detection: content not moving.
-            if (HammingDistance(prevTickHash, hash) < 5)
+            // Bottom detection: content not moving — require multiple consecutive stable frames.
+            if (HammingDistance(prevTickHash, hash) < DuplicateThreshold)
             {
-                // Save final frame if it has new content vs last capture.
-                if (HammingDistance(lastCapturedHash, hash) > OverlapThreshold / 2)
+                stableCount++;
+                if (stableCount >= StableFramesRequired)
                 {
-                    capturedFrames.Add(BitmapToJpeg(frame));
-                    preview?.AddFrame(capturedFrames[^1]);
-                    var fc = capturedFrames.Count;
-                    Application.Current.Dispatcher.Invoke(() => bar!.UpdateCount(fc, false, "image"));
+                    // Save final frame if it differs from last capture.
+                    if (HammingDistance(lastCapturedHash, hash) >= DuplicateThreshold)
+                    {
+                        capturedFrames.Add(BitmapToJpeg(frame));
+                        preview?.AddFrame(capturedFrames[^1]);
+                        var fc = capturedFrames.Count;
+                        Application.Current.Dispatcher.Invoke(() => bar!.UpdateCount(fc, false, "image"));
+                    }
+                    barTcs.TrySetResult(true); // auto-finalize on reaching bottom
+                    break;
                 }
-                break;
+            }
+            else
+            {
+                stableCount = 0;
             }
 
-            // Capture when enough new content has accumulated since last capture.
-            if (HammingDistance(lastCapturedHash, hash) > OverlapThreshold)
+            // Capture every tick that has new content (skip near-identical frames only).
+            // SampleFrames handles the Vision API 20-image cap later.
+            if (HammingDistance(lastCapturedHash, hash) >= DuplicateThreshold)
             {
                 capturedFrames.Add(BitmapToJpeg(frame));
                 lastCapturedHash = hash;
@@ -197,10 +214,13 @@ public class SummaryMode : ITranslationMode
         System.Diagnostics.Process.Start("explorer.exe", debugDir);
 
         bool finalize = barTcs.Task.IsCompleted && await barTcs.Task;
-        if (!finalize || capturedFrames.Count == 0) return;
+        if (capturedFrames.Count == 0) return;
 
-        // Phase 4: summarize via Vision API — evenly sample if over the 20-image limit
-        var frames = SampleFrames(capturedFrames, maxCount: 20);
+        // Phase 4: stitch all frames into one tall image.
+        var stitched = await Task.Run(() => ImageStitcher.StitchVertically(capturedFrames), ct);
+        File.WriteAllBytes(Path.Combine(debugDir, "stitched.jpg"), stitched);
+
+        if (!finalize) return;
 
         TextPaneWindow? pane = null;
         Application.Current.Dispatcher.Invoke(() =>
@@ -212,7 +232,7 @@ public class SummaryMode : ITranslationMode
         });
         try
         {
-            var summary = await _translator.SummarizeImagesAsync(frames, _settings.SourceLanguage, ct);
+            var summary = await _translator.SummarizeImagesAsync([stitched], _settings.SourceLanguage, ct);
             Application.Current.Dispatcher.Invoke(() => pane!.ShowTranslation([summary]));
         }
         catch
@@ -287,16 +307,6 @@ public class SummaryMode : ITranslationMode
         {
             resized?.Dispose();
         }
-    }
-
-    // Evenly samples up to maxCount frames from the list, always including first and last.
-    private static List<byte[]> SampleFrames(List<byte[]> frames, int maxCount)
-    {
-        if (frames.Count <= maxCount) return frames;
-        var result = new List<byte[]>(maxCount);
-        for (int i = 0; i < maxCount; i++)
-            result.Add(frames[(int)((long)i * (frames.Count - 1) / (maxCount - 1))]);
-        return result;
     }
 
     public void Deactivate()

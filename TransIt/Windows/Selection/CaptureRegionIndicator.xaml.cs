@@ -14,8 +14,10 @@ public partial class CaptureRegionIndicator : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // Make click-through so user can scroll the content underneath
         var hwnd = new WindowInteropHelper(this).Handle;
+        // Exclude from GDI/DWM screen capture so frames don't include the border overlay.
+        NativeMethods.SetWindowDisplayAffinity(hwnd, NativeMethods.WDA_EXCLUDEFROMCAPTURE);
+        // Also make click-through so user can scroll the content underneath.
         var ex = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
         NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE,
             ex | NativeMethods.WS_EX_TRANSPARENT);
