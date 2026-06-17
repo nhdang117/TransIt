@@ -19,6 +19,8 @@ public class OverlayTextItem
         Bitmap sourceBitmap,
         double dpiScale = 1.0)
     {
+        translatedText = translatedText.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
+
         // OCR returns coordinates in sourceBitmap pixel space (physical pixels).
         // Use them directly to sample colours from the bitmap.
         var physRect = block.BoundingRect;
@@ -27,7 +29,7 @@ public class OverlayTextItem
             (int)physRect.Y,
             Math.Max(1, (int)physRect.Width),
             Math.Max(1, (int)physRect.Height));
-
+        Console.WriteLine($"translatedText = '{translatedText}'");
         sampleRect.Intersect(new Rectangle(0, 0, sourceBitmap.Width, sourceBitmap.Height));
         if (sampleRect.Width < 1) sampleRect.Width = 1;
         if (sampleRect.Height < 1) sampleRect.Height = 1;
@@ -41,34 +43,9 @@ public class OverlayTextItem
                        physRect.Width / dpiScale, physRect.Height / dpiScale)
             : physRect;
 
-        // Average individual OCR line heights (physical px → DIPs).
-        // Do NOT use block.BoundingRect.Height / lineCount — the union bounding
-        // rect includes inter-line gaps, which vary per app (code vs prose) and
-        // inflate lineHeight inconsistently.
-        double avgLinePhys = block.Lines.Average(l => l.BoundingRect.Height);
-        double lineHeight  = avgLinePhys / dpiScale;
-        double fontSize    = Services.FontSizeEstimator.Estimate(lineHeight, block.FullText);
+        double fontSize = Services.TextFitter.FitFontSize(translatedText, logicalRect.Width, logicalRect.Height);
 
-        // Translated text is often longer than the source; allow generous vertical growth
-        // (the render border has no fixed height and auto-grows) before shrinking the font,
-        // so only pathological overflow (e.g. a single short word translating to a long phrase) shrinks.
-        double availableHeight = Math.Max(logicalRect.Height, lineHeight * block.Lines.Count) * 2.5;
-        fontSize = Services.TextFitter.FitFontSize(translatedText, fontSize, logicalRect.Width, availableHeight);
-
-        // DEBUG — writes sizing data to %APPDATA%\TransIt\overlay_debug.log
-        // Remove once font-size tuning is confirmed.
-        try
-        {
-            var dbgPath = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "TransIt", "overlay_debug.log");
-            System.IO.File.AppendAllText(dbgPath,
-                $"dpi={dpiScale:F2} physH={physRect.Height:F0}px lines={block.Lines.Count} " +
-                $"logH={logicalRect.Height:F1} lineH={lineHeight:F1} fontSize={fontSize:F1}\n");
-        }
-        catch { }
-
-        return new OverlayTextItem
+return new OverlayTextItem
         {
             TranslatedText  = translatedText,
             ScreenRect      = logicalRect,

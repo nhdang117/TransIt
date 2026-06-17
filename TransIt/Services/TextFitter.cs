@@ -7,36 +7,34 @@ namespace TransIt.Services;
 public static class TextFitter
 {
     public const double MinFontSize = 8.0;
-    private const double ShrinkStep = 1.0;
+    public const double MaxFontSize = 96.0;
 
-    // Shrinks fontSize until the wrapped text fits within availableHeight (with tolerance),
-    // or until MinFontSize is reached. Translated text is often longer than the source OCR
-    // line, so a modest overflow is expected and tolerated before shrinking kicks in.
-    public static double FitFontSize(
-        string text, double initialFontSize, double availableWidth, double availableHeight,
-        double toleranceFactor = 1.1)
+    // Binary search for largest fontSize where wrapped text fits in width × height.
+    public static double FitFontSize(string text, double availableWidth, double availableHeight)
     {
-        double fontSize = initialFontSize;
         double maxWidth = Math.Max(1, availableWidth);
+        int lo = (int)MinFontSize;
+        int hi = (int)MaxFontSize;
 
-        while (fontSize > MinFontSize)
+        while (lo < hi)
         {
-            var formatted = new FormattedText(
+            int mid = (lo + hi + 1) / 2;
+            var ft = new FormattedText(
                 text,
                 CultureInfo.CurrentUICulture,
                 FlowDirection.LeftToRight,
                 new Typeface("Segoe UI"),
-                fontSize,
+                mid,
                 Brushes.Black,
                 1.0)
-            {
-                MaxTextWidth = maxWidth,
-            };
+            { MaxTextWidth = maxWidth };
 
-            if (formatted.Height <= availableHeight * toleranceFactor) break;
-            fontSize -= ShrinkStep;
+            if (ft.Height <= availableHeight)
+                lo = mid;
+            else
+                hi = mid - 1;
         }
 
-        return Math.Max(fontSize, MinFontSize);
+        return lo;
     }
 }

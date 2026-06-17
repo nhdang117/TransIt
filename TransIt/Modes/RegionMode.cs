@@ -1,6 +1,4 @@
 using System.Drawing;
-using System.Drawing.Imaging;
-using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
@@ -22,6 +20,10 @@ public class RegionMode : ITranslationMode
     private readonly OverlayWindow _overlay;
     private TextPaneWindow? _activePane;
 
+    private System.Drawing.Bitmap? _storedBitmap;
+    private System.Drawing.Rectangle _storedMonRect;
+    private double _storedDpiScale;
+
     public RegionMode(OcrService ocr, LayoutService layout, TranslationService translator,
                       AppSettings settings, OverlayWindow overlay)
     {
@@ -37,26 +39,21 @@ public class RegionMode : ITranslationMode
         Application.Current.Dispatcher.Invoke(() => _overlay.Hide());
 
         var tcs = new TaskCompletionSource<bool>();
-        RegionSelectWindow selector = null!;
+        WindowPickerOverlay picker = null!;
         Application.Current.Dispatcher.Invoke(() =>
         {
-            selector = new RegionSelectWindow();
-            selector.Closed += (_, _) => tcs.TrySetResult(true);
-            selector.Show();
+            picker = new WindowPickerOverlay();
+            picker.Closed += (_, _) => tcs.TrySetResult(true);
+            picker.Show();
         });
         await tcs.Task;
 
-        if (selector.Cancelled || selector.SelectedRect is null) return;
+        if (picker.Cancelled || picker.SelectedPhysRect is null) return;
         ct.ThrowIfCancellationRequested();
 
-        var physRect = selector.SelectedRect.Value;
-        bool useVision = _settings.UseVisionApi && _settings.Provider == TranslationProvider.OpenAI;
-        if (_settings.RegionOverlayMode && useVision)
-            await RunVisionOverlayMode(physRect, ct);
-        else if (_settings.RegionOverlayMode)
+        var physRect = picker.SelectedPhysRect.Value;
+        if (_settings.RegionOverlayMode)
             await RunOverlayMode(physRect, ct);
-        else if (useVision)
-            await RunVisionMode(physRect, ct);
         else
             await RunTextPaneMode(physRect, ct);
     }
@@ -108,6 +105,7 @@ public class RegionMode : ITranslationMode
             for (int i = 0; i < blocks.Count; i++)
             {
                 var text = translatedById.TryGetValue(i, out var t) && !string.IsNullOrWhiteSpace(t) ? t : blocks[i].FullText;
+                Console.WriteLine($"Block {i}: '{blocks[i].FullText}' → '{text}'");
                 var item = OverlayTextItem.Build(blocks[i], text, fullBitmap, dpiScale);
                 item.ScreenRect = new System.Windows.Rect(
                     item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
@@ -115,7 +113,25 @@ public class RegionMode : ITranslationMode
                 items.Add(item);
             }
 
-            Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
+            _storedBitmap?.Dispose();
+            _storedBitmap = new System.Drawing.Bitmap(fullBitmap);
+            _storedMonRect = monRect;
+            _storedDpiScale = dpiScale;
+
+            if (_settings.ShowDebugRects)
+            {
+                Rect ToLog(Rect p) => new(
+                    p.X / dpiScale + monLogX, p.Y / dpiScale + monLogY,
+                    p.Width / dpiScale, p.Height / dpiScale);
+                var lineRectsLog  = lines.Select(l => ToLog(l.BoundingRect)).ToList();
+                var blockRectsLog = blocks.Select(b => ToLog(b.BoundingRect)).ToList();
+                Application.Current.Dispatcher.Invoke(() =>
+                    _overlay.UpdateWithTranslationAndDebug(items, lineRectsLog, blockRectsLog));
+            }
+            else
+            {
+                Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
+            }
         }
         catch
         {
@@ -166,129 +182,76 @@ public class RegionMode : ITranslationMode
         }
     }
 
-    private async Task RunVisionOverlayMode(System.Drawing.Rectangle physRect, CancellationToken ct)
+    public async Task AddRegionAsync(CancellationToken ct)
     {
-        var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
-            physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
-        using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
-        var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(fullBitmap));
-        Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
+        if (_storedBitmap is null) return;
 
-        try
-        {
-            int bx = Math.Max(0, physRect.X - monRect.Left);
-            int by = Math.Max(0, physRect.Y - monRect.Top);
-            int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
-            int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
-
-            using var regionBitmap = fullBitmap.Clone(new Rectangle(bx, by, bw, bh), fullBitmap.PixelFormat);
-
-            byte[] pngBytes;
-            using (var ms = new MemoryStream())
-            {
-                regionBitmap.Save(ms, ImageFormat.Png);
-                pngBytes = ms.ToArray();
-            }
-
-            // OCR and Vision AI run in parallel — OCR gives rects, Vision gives translations
-            var ocrTask    = _ocr.RecognizeAsync(regionBitmap, _settings.SourceLanguage, ct);
-            var visionTask = _translator.TranslateImageAsync(pngBytes,
-                                 _settings.SourceLanguage, _settings.TargetLanguage, ct);
-            await Task.WhenAll(ocrTask, visionTask);
-
-            var lines = ocrTask.Result;
-            if (lines.Count == 0)
-            {
-                Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation([]));
-                return;
-            }
-
-            foreach (var line in lines)
-            {
-                line.BoundingRect = Offset(line.BoundingRect, bx, by);
-                foreach (var word in line.Words)
-                    word.BoundingRect = Offset(word.BoundingRect, bx, by);
-            }
-
-            var blocks      = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct, bx, by);
-            var visionTexts = visionTask.Result;
-            var matched     = MatchVisionToBlocks(blocks, visionTexts);
-
-            double monLogX = monRect.Left / dpiScale;
-            double monLogY = monRect.Top  / dpiScale;
-
-            var items = new List<OverlayTextItem>();
-            for (int i = 0; i < blocks.Count; i++)
-            {
-                var item = OverlayTextItem.Build(blocks[i], matched[i], fullBitmap, dpiScale);
-                item.ScreenRect = new System.Windows.Rect(
-                    item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
-                    item.ScreenRect.Width, item.ScreenRect.Height);
-                items.Add(item);
-            }
-
-            Application.Current.Dispatcher.Invoke(() => _overlay.UpdateWithTranslation(items));
-        }
-        catch
-        {
-            Application.Current.Dispatcher.Invoke(() => _overlay.HideOverlay());
-            throw;
-        }
-    }
-
-    // Zip vision paragraphs to OCR blocks by index.
-    // Extra vision paragraphs append to the last block; missing ones leave block text empty.
-    private static List<string> MatchVisionToBlocks(List<OcrBlock> blocks, List<string> vision)
-    {
-        var result = new List<string>(blocks.Count);
-        for (int i = 0; i < blocks.Count; i++)
-            result.Add(i < vision.Count ? vision[i] : string.Empty);
-
-        if (vision.Count > blocks.Count && blocks.Count > 0)
-            result[^1] += "\n" + string.Join("\n", vision.Skip(blocks.Count));
-
-        return result;
-    }
-
-    private async Task RunVisionMode(System.Drawing.Rectangle physRect, CancellationToken ct)
-    {
-        using var regionBitmap = ScreenCaptureService.CaptureRegion(physRect);
-
-        byte[] pngBytes;
-        using (var ms = new MemoryStream())
-        {
-            regionBitmap.Save(ms, ImageFormat.Png);
-            pngBytes = ms.ToArray();
-        }
-
-        TextPaneWindow? pane = null;
+        var tcs = new TaskCompletionSource<bool>();
+        WindowPickerOverlay picker = null!;
         Application.Current.Dispatcher.Invoke(() =>
         {
-            pane = new TextPaneWindow();
-            _activePane = pane;
-            pane.Closed += (_, _) => { if (_activePane == pane) _activePane = null; };
-            pane.ShowLoading();
+            picker = new WindowPickerOverlay();
+            picker.Closed += (_, _) => tcs.TrySetResult(true);
+            picker.Show();
         });
+        await tcs.Task;
 
-        try
-        {
-            var translated = await _translator.TranslateImageAsync(pngBytes,
-                _settings.SourceLanguage, _settings.TargetLanguage, ct);
+        if (picker.Cancelled || picker.SelectedPhysRect is null) return;
+        ct.ThrowIfCancellationRequested();
 
-            Application.Current.Dispatcher.Invoke(() => pane!.ShowTranslation(translated));
-        }
-        catch
+        var physRect = picker.SelectedPhysRect.Value;
+        var fullBitmap = _storedBitmap;
+        var monRect    = _storedMonRect;
+        var dpiScale   = _storedDpiScale;
+
+        int bx = Math.Max(0, physRect.X - monRect.Left);
+        int by = Math.Max(0, physRect.Y - monRect.Top);
+        int bw = Math.Min(physRect.Width,  fullBitmap.Width  - bx);
+        int bh = Math.Min(physRect.Height, fullBitmap.Height - by);
+        if (bw <= 0 || bh <= 0) return;
+
+        using var regionBitmap = fullBitmap.Clone(
+            new Rectangle(bx, by, bw, bh), fullBitmap.PixelFormat);
+
+        var lines = await _ocr.RecognizeAsync(regionBitmap, _settings.SourceLanguage, ct);
+        if (lines.Count == 0) return;
+
+        foreach (var line in lines)
         {
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                if (_activePane == pane) { pane?.Close(); _activePane = null; }
-            });
-            throw;
+            line.BoundingRect = Offset(line.BoundingRect, bx, by);
+            foreach (var word in line.Words)
+                word.BoundingRect = Offset(word.BoundingRect, bx, by);
         }
+
+        var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct, bx, by);
+        var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
+            i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y,
+            b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
+        var translatedById = await _translator.TranslateBlocksAsync(
+            translatable, _settings.SourceLanguage, _settings.TargetLanguage, ct);
+
+        double monLogX = monRect.Left / dpiScale;
+        double monLogY = monRect.Top  / dpiScale;
+
+        var items = new List<OverlayTextItem>();
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            var text = translatedById.TryGetValue(i, out var t) && !string.IsNullOrWhiteSpace(t)
+                ? t : blocks[i].FullText;
+            var item = OverlayTextItem.Build(blocks[i], text, fullBitmap, dpiScale);
+            item.ScreenRect = new System.Windows.Rect(
+                item.ScreenRect.X + monLogX, item.ScreenRect.Y + monLogY,
+                item.ScreenRect.Width, item.ScreenRect.Height);
+            items.Add(item);
+        }
+
+        Application.Current.Dispatcher.Invoke(() => _overlay.AddTranslationItems(items));
     }
 
     public void Deactivate()
     {
+        _storedBitmap?.Dispose();
+        _storedBitmap = null;
         Application.Current.Dispatcher.Invoke(() =>
         {
             _overlay.HideOverlay();

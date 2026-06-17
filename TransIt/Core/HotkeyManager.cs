@@ -5,10 +5,10 @@ namespace TransIt.Core;
 
 public sealed class HotkeyManager : IDisposable
 {
-    public const int ID_SNAPSHOT  = 1;   // Alt+2
-    public const int ID_REGION    = 2;   // Ctrl+2
-    public const int ID_REALTIME  = 3;   // Alt+3
-    public const int ID_OCR_DEBUG = 4;   // Ctrl+1
+    public const int ID_REGION         = 2;   // Ctrl+2
+    public const int ID_SUMMARY        = 3;   // Ctrl+3
+    public const int ID_OCR_DEBUG      = 4;   // Ctrl+1
+    public const int ID_SUMMARY_SCROLL = 5;   // Ctrl+Shift+3
 
     public event EventHandler<int>? HotkeyPressed;
 

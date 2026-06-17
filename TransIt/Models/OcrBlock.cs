@@ -117,16 +117,150 @@ public class OcrBlock
         foreach (var region in orderedRegions)
         {
             if (!assigned.TryGetValue(region, out var regionLines) || regionLines.Count == 0) continue;
-            // A region can still contain multiple paragraphs (e.g. a blank-line gap within
-            // one "Text" region) - re-run the geometric splitter inside the region's own line
-            // set instead of merging everything the layout pass assigned into one block.
-            blocks.AddRange(GroupLines(regionLines));
+            blocks.AddRange(GroupLinesInRegion(regionLines));
         }
 
         if (unassigned.Count > 0)
             blocks.AddRange(GroupLines(unassigned));
 
         return blocks.OrderBy(b => b.BoundingRect.Y).ThenBy(b => b.BoundingRect.X).ToList();
+    }
+
+    // Gap-based paragraph splitter for lines within a single layout region.
+    // Phase 1: merge consecutive lines whose vertical gap is below mergeThreshold.
+    //   - 2-line regions: mergeThreshold = avgHeight (can't infer spacing from 1 gap;
+    //     use line height as reference, consistent with ShouldMerge's localH * 1.0 rule).
+    //   - 3+ line regions: mergeThreshold = smallestGap * 1.5 — smallest gap is normal
+    //     line spacing; paragraph breaks must be > 1.5× that to separate blocks.
+    // Phase 2: within each merged group, split after any non-last line whose width is
+    //          < 55% of the group's widest line (signals a forced Enter / paragraph end).
+    private static List<OcrBlock> GroupLinesInRegion(List<OcrLine> lines)
+    {
+        if (lines.Count <= 1) return lines.Count == 0 ? [] : [new OcrBlock { Lines = lines }];
+
+        var sorted = lines.OrderBy(l => l.BoundingRect.Y).ToList();
+        int n = sorted.Count;
+
+        double avgHeight = sorted.Average(l => l.BoundingRect.Height);
+
+        double mergeThreshold = getGroupMergeThreshold(lines);
+        Console.WriteLine($"Grouping {n} lines in region: avg height = {avgHeight:F1}, merge threshold = {mergeThreshold:F1}");
+        var parent = Enumerable.Range(0, n).ToArray();
+        int Find(int x) => parent[x] == x ? x : parent[x] = Find(parent[x]);
+        void Union(int a, int b) { a = Find(a); b = Find(b); if (a != b) parent[a] = b; }
+
+        // Only consecutive pairs need checking — list is sorted by Y, so non-consecutive
+        // pairs always exceed mergeThreshold and can only merge transitively anyway.
+        for (int i = 0; i < n - 1; i++)
+        {
+            double gap = sorted[i + 1].BoundingRect.Y - (sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height);
+            Console.WriteLine($"Region line {i} Bottom Y = {sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height}, line {i + 1} top Y = {sorted[i + 1].BoundingRect.Y:F1}");
+            Console.WriteLine($"  → Gap between lines {i} and {i + 1}: {gap:F1}");
+            if (gap <= mergeThreshold)
+                Union(i, i + 1);
+        }
+
+        var groups = Enumerable.Range(0, n)
+            .GroupBy(Find)
+            .Select(g => g.Select(i => sorted[i]).OrderBy(l => l.BoundingRect.Y).ToList())
+            .ToList();
+
+        var result = new List<OcrBlock>();
+        foreach (var group in groups)
+            result.AddRange(SplitOnShortLines(group));
+        return result;
+    }
+
+    private static List<OcrBlock> SplitOnShortLines(List<OcrLine> lines)
+    {
+        if (lines.Count <= 1) return [new OcrBlock { Lines = lines }];
+
+        double maxWidth = lines.Max(l => l.BoundingRect.Width);
+        var blocks = new List<OcrBlock>();
+        int start = 0;
+
+        for (int i = 0; i < lines.Count - 1; i++)
+        {
+            // A non-last line that is much narrower than the block's widest line signals
+            // a paragraph end (manual Enter or ragged last line). Split after it.
+            if (lines[i].BoundingRect.Width < maxWidth * 0.55)
+            {
+                blocks.Add(new OcrBlock { Lines = lines.GetRange(start, i - start + 1) });
+                start = i + 1;
+            }
+        }
+
+        blocks.Add(new OcrBlock { Lines = lines.GetRange(start, lines.Count - start) });
+        return blocks;
+    }
+
+    /// Returns Y-expanded rects for each line assigned to a layout region, showing
+    /// the merge-zone used by GroupLinesInRegion. Two consecutive zones that overlap
+    /// in Y (and share X) correspond to a merge. Used by Ctrl+1 debug overlay.
+    public static List<Rect> GetMergeZoneRects(List<OcrLine> lines, List<LayoutRegion> regions)
+    {
+        const double MinLineCoverage = 0.55;
+        var assigned = new Dictionary<LayoutRegion, List<OcrLine>>();
+
+        foreach (var line in lines)
+        {
+            double lineArea = line.BoundingRect.Width * line.BoundingRect.Height;
+            LayoutRegion? best = null;
+            double bestCoverage = 0;
+            foreach (var region in regions)
+            {
+                var overlap = Rect.Intersect(line.BoundingRect, region.BoundingRect);
+                if (overlap.IsEmpty || lineArea <= 0) continue;
+                double coverage = overlap.Width * overlap.Height / lineArea;
+                if (coverage > bestCoverage) { bestCoverage = coverage; best = region; }
+            }
+            if (best != null && bestCoverage >= MinLineCoverage)
+            {
+                if (!assigned.TryGetValue(best, out var list)) assigned[best] = list = [];
+                list.Add(line);
+            }
+        }
+
+        var result = new List<Rect>();
+        foreach (var (_, regionLines) in assigned)
+        {
+            var sorted = regionLines.OrderBy(l => l.BoundingRect.Y).ToList();
+            int n = sorted.Count;
+            if (n < 2) continue;
+
+            double mergeThreshold = getGroupMergeThreshold(regionLines);
+            
+            double expand = mergeThreshold / 2.0;
+            foreach (var line in sorted)
+            {
+                var r = line.BoundingRect;
+                result.Add(new Rect(r.X, r.Y - expand, r.Width, r.Height + expand * 2));
+            }
+        }
+        return result;
+    }
+
+    private static double getGroupMergeThreshold(List<OcrLine> lines)
+    {
+        if (lines.Count <= 1) return double.MaxValue;
+
+        var sorted = lines.OrderBy(l => l.BoundingRect.Y).ToList();
+        double avgHeight = sorted.Average(l => l.BoundingRect.Height);
+
+        var gaps = new List<double>();
+        for (int i = 0; i < sorted.Count - 1; i++)
+        {
+            double g = sorted[i + 1].BoundingRect.Y - (sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height);
+            if (g > avgHeight * 0.1)   // lọc overlap và gap rác OCR
+                gaps.Add(g);
+        }
+
+        if (gaps.Count == 0) return avgHeight;
+
+        gaps.Sort();
+        double medianGap = gaps[gaps.Count / 2];   // median, không phải min
+
+        return medianGap * 1.5;   // 1.5× thay vì 2× vì median đã cao hơn min
     }
 
     private static bool ShouldMerge(Rect aRect, Rect bRect, double medianPitch)

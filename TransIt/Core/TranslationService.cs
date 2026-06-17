@@ -9,24 +9,12 @@ namespace TransIt.Core;
 public class TranslationService
 {
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient _httpVision = new() { Timeout = TimeSpan.FromSeconds(120) };
     private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     private readonly AppSettings _settings;
 
     public TranslationService(AppSettings settings) => _settings = settings;
-
-    public Task<List<string>> TranslateAsync(
-        IList<string> texts,
-        string sourceLang,
-        string targetLang,
-        CancellationToken ct = default)
-    {
-        if (texts.Count == 0) return Task.FromResult(new List<string>());
-
-        return _settings.Provider == TranslationProvider.OpenAI
-            ? TranslateOpenAiAsync(texts, sourceLang, targetLang, ct)
-            : TranslateGoogleAsync(texts, sourceLang, targetLang, ct);
-    }
 
     public record TranslatableBlock(int Id, string Text, double X, double Y, double W, double H);
 
@@ -51,10 +39,13 @@ public class TranslationService
         IList<TranslatableBlock> blocks, string src, string tgt, CancellationToken ct)
     {
         var inputJson = JsonSerializer.Serialize(blocks);
+        Console.WriteLine("===================");
+        Console.WriteLine($"TranslateBlocksOpenAiAsync inputJson = {inputJson}");
         var systemPrompt =
             $"You are a professional translator from {src} to {tgt}. Follow these rules exactly:\n" +
             $"1. Translate every item's \"Text\" field from {src} to {tgt}.\n" +
-            $"2. Preserve ALL newline characters (\\n) at exactly the same positions as in the source.\n" +
+            $"2. Prioritize conveying the correct meaning and intent — do NOT translate word-for-word. " +
+            $"Use natural, idiomatic {tgt} phrasing. Lightly polish the sentence flow so the result reads smoothly and is easy to understand, as if written by a native {tgt} speaker.\n" +
             $"3. Leave UNCHANGED: mathematical and technical symbols (→ ← ↑ ↓ ≤ ≥ ≠ ≈ ± × ÷ ∑ √ ∞ ∈ ∉ ⊂ ⊃ ∩ ∪ ∀ ∃ etc.), " +
             $"ASCII operators and punctuation used as symbols (-> >= <= == != => ** // etc.), " +
             $"identifiers in camelCase / PascalCase / snake_case / SCREAMING_SNAKE_CASE, " +
@@ -71,7 +62,7 @@ public class TranslationService
                 new { role = "system", content = systemPrompt },
                 new { role = "user",   content = inputJson }
             },
-            temperature = 0.1
+            temperature = 0.5
         };
 
         var request = new HttpRequestMessage(HttpMethod.Post,
@@ -89,6 +80,8 @@ public class TranslationService
         var doc = JsonNode.Parse(json);
         var content = doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
                       ?? throw new Exception("Unexpected OpenAI response shape.");
+        Console.WriteLine("===================");
+        Console.WriteLine($"OpenAI response content = {content}");
 
         return ParseJsonIdArray(content, blocks.Select(b => b.Id).ToList());
     }
@@ -103,112 +96,6 @@ public class TranslationService
         for (int i = 0; i < blocks.Count; i++)
             result[blocks[i].Id] = i < translated.Count ? translated[i] : string.Empty;
         return result;
-    }
-
-    // ── OpenAI ───────────────────────────────────────────────────────────────
-
-    private async Task<List<string>> TranslateOpenAiAsync(
-        IList<string> texts, string src, string tgt, CancellationToken ct)
-    {
-        var inputJson = JsonSerializer.Serialize(texts);
-        var systemPrompt =
-            $"You are a professional translator from {src} to {tgt}. Follow these rules exactly:\n" +
-            $"1. Translate every string from {src} to {tgt}.\n" +
-            $"2. Preserve ALL newline characters (\\n) at exactly the same positions as in the source.\n" +
-            $"3. Leave UNCHANGED: mathematical and technical symbols (→ ← ↑ ↓ ≤ ≥ ≠ ≈ ± × ÷ ∑ √ ∞ ∈ ∉ ⊂ ⊃ ∩ ∪ ∀ ∃ etc.), " +
-            $"ASCII operators and punctuation used as symbols (-> >= <= == != => ** // etc.), " +
-            $"identifiers in camelCase / PascalCase / snake_case / SCREAMING_SNAKE_CASE, " +
-            $"proper nouns and personal names, URLs, file paths, version numbers, and numeric values.\n" +
-            $"4. Preserve the original punctuation structure: hyphens, dashes, commas, and end-of-line periods.\n" +
-            $"5. Return ONLY a valid JSON array of strings — same count and order as the input array. No markdown fences, no explanations.";
-
-        var body = new
-        {
-            model = _settings.OpenAiModel,
-            messages = new[]
-            {
-                new { role = "system", content = systemPrompt },
-                new { role = "user",   content = inputJson }
-            },
-            temperature = 0.1
-        };
-
-        var request = new HttpRequestMessage(HttpMethod.Post,
-            "https://api.openai.com/v1/chat/completions")
-        {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-        };
-        request.Headers.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
-
-        var resp = await _http.SendAsync(request, ct);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct);
-
-        var doc = JsonNode.Parse(json);
-        var content = doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
-                      ?? throw new Exception("Unexpected OpenAI response shape.");
-
-        return ParseJsonArray(content, texts.Count);
-    }
-
-    // ── OpenAI Vision ────────────────────────────────────────────────────────
-
-    public async Task<List<string>> TranslateImageAsync(
-        byte[] pngBytes, string src, string tgt, CancellationToken ct = default)
-    {
-        var base64 = Convert.ToBase64String(pngBytes);
-        var dataUrl = $"data:image/png;base64,{base64}";
-
-        var srcName = LangName(src);
-        var tgtName = LangName(tgt);
-        var systemPrompt =
-            $"You are a professional OCR engine and translator. Follow these rules exactly:\n" +
-            $"1. Read ALL visible text from the image.\n" +
-            $"2. Translate every piece of extracted text from {srcName} into {tgtName}. Output MUST be in {tgtName}.\n" +
-            $"3. Group translated {tgtName} text into visual paragraph blocks as they appear top-to-bottom in the image.\n" +
-            $"4. Within each paragraph block, preserve newline positions that reflect the visual line breaks.\n" +
-            $"5. Leave UNCHANGED: mathematical and technical symbols (→ ← ↑ ↓ ≤ ≥ ≠ ≈ ± × ÷ ∑ √ ∞ etc.), " +
-            $"ASCII operators (-> >= <= == != => ** // etc.), " +
-            $"identifiers in camelCase / PascalCase / snake_case / SCREAMING_SNAKE_CASE, " +
-            $"proper nouns, personal names, URLs, file paths, version numbers, and numeric values.\n" +
-            $"6. Return ONLY a valid JSON array of {tgtName} strings — one string per paragraph block, in reading order. No markdown fences, no explanations.";
-
-        var body = new
-        {
-            model = _settings.OpenAiModel,
-            messages = new object[]
-            {
-                new { role = "system", content = systemPrompt },
-                new
-                {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new { type = "image_url", image_url = new { url = dataUrl } }
-                    }
-                }
-            },
-            temperature = 0.1
-        };
-
-        var request = new HttpRequestMessage(HttpMethod.Post,
-            "https://api.openai.com/v1/chat/completions")
-        {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-        };
-        request.Headers.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
-
-        var resp = await _http.SendAsync(request, ct);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct);
-
-        var doc = JsonNode.Parse(json);
-        var content = doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
-                      ?? throw new Exception("Unexpected OpenAI vision response shape.");
-
-        return ParseJsonArray(content, -1);
     }
 
     // ── Google Translate ──────────────────────────────────────────────────────
@@ -238,31 +125,118 @@ public class TranslationService
             .ToList();
     }
 
-    // ── Language name lookup ──────────────────────────────────────────────────
+    // ── Summarize ─────────────────────────────────────────────────────────────
 
-    private static string LangName(string code) => code.ToLowerInvariant() switch
+    // Sends captured scroll screenshots to OpenAI Vision API and returns a Vietnamese summary.
+    // Each jpeg is sent as a low-detail image_url part to keep token cost minimal (~85 tokens/image).
+    public async Task<string> SummarizeImagesAsync(
+        IList<byte[]> jpegImages,
+        string sourceLang,
+        CancellationToken ct = default)
     {
-        "en"    => "English",
-        "vi"    => "Vietnamese",
-        "zh"    => "Chinese (Simplified)",
-        "zh-tw" => "Chinese (Traditional)",
-        "ja"    => "Japanese",
-        "ko"    => "Korean",
-        "fr"    => "French",
-        "de"    => "German",
-        "es"    => "Spanish",
-        "pt"    => "Portuguese",
-        "ru"    => "Russian",
-        "ar"    => "Arabic",
-        "th"    => "Thai",
-        "it"    => "Italian",
-        "nl"    => "Dutch",
-        "pl"    => "Polish",
-        "tr"    => "Turkish",
-        "id"    => "Indonesian",
-        "ms"    => "Malay",
-        _       => code
-    };
+        if (jpegImages.Count == 0) return string.Empty;
+        if (_settings.Provider != TranslationProvider.OpenAI)
+            throw new NotSupportedException("Image summarization requires OpenAI provider.");
+
+        var systemPrompt =
+            $"You are a summarization assistant. The user captured a series of scrolling screenshots. " +
+            $"Analyze all images in reading order and produce a comprehensive summary in Vietnamese. " +
+            $"The source content is in {sourceLang}. " +
+            $"Structure your response exactly:\n" +
+            $"1. One short paragraph (2-3 sentences) capturing the overall topic.\n" +
+            $"2. A blank line.\n" +
+            $"3. Key points as bullet list using '•', one per line, each brief (1 sentence max).\n" +
+            $"No headings, no markdown fences, no extra commentary.";
+
+        var contentParts = new List<object>
+        {
+            new { type = "text", text = $"Here are {jpegImages.Count} scrolling screenshots to summarize:" }
+        };
+        foreach (var jpeg in jpegImages)
+        {
+            var b64 = Convert.ToBase64String(jpeg);
+            contentParts.Add(new
+            {
+                type = "image_url",
+                image_url = new { url = $"data:image/jpeg;base64,{b64}", detail = "low" }
+            });
+        }
+
+        var body = new
+        {
+            model = _settings.OpenAiModel,
+            messages = new object[]
+            {
+                new { role = "system", content = systemPrompt },
+                new { role = "user",   content = contentParts }
+            },
+            temperature = 0.5,
+            max_tokens = 2000
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
+
+        var resp = await _httpVision.SendAsync(request, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+
+        var doc = JsonNode.Parse(json);
+        return doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
+               ?? throw new Exception("Unexpected OpenAI response shape.");
+    }
+
+    public async Task<string> SummarizeAsync(
+        string text,
+        string sourceLang,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        if (_settings.Provider != TranslationProvider.OpenAI)
+            throw new NotSupportedException("Summarization requires OpenAI provider.");
+
+        var systemPrompt =
+            $"You are a summarization assistant. Summarize the following text in Vietnamese. " +
+            $"The source text is in {sourceLang}. " +
+            $"IMPORTANT: Structure your response in exactly this format:\n" +
+            $"1. One short concise paragraph (2-3 sentences max) capturing the overall meaning.\n" +
+            $"2. A blank line.\n" +
+            $"3. Key points as a bullet list using '•' character, one point per line, each point brief (1 sentence max).\n" +
+            $"No headings, no extra commentary, no markdown fences. Return only the paragraph and bullet list.";
+
+        var body = new
+        {
+            model = _settings.OpenAiModel,
+            messages = new[]
+            {
+                new { role = "system", content = systemPrompt },
+                new { role = "user",   content = text }
+            },
+            temperature = 0.5
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
+
+        var resp = await _http.SendAsync(request, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+
+        var doc = JsonNode.Parse(json);
+        return doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
+               ?? throw new Exception("Unexpected OpenAI response shape.");
+    }
 
     // ── Helper ────────────────────────────────────────────────────────────────
 
@@ -299,25 +273,4 @@ public class TranslationService
         return result;
     }
 
-    private static List<string> ParseJsonArray(string content, int expectedCount)
-    {
-        content = StripMarkdownFences(content);
-
-        try
-        {
-            var arr = JsonSerializer.Deserialize<List<string>>(content, _jsonOpts);
-            if (arr != null && arr.Count > 0)
-            {
-                if (expectedCount < 0) return arr;
-                // Pad with empty strings if short; truncate if long.
-                while (arr.Count < expectedCount) arr.Add(string.Empty);
-                return arr.Count > expectedCount ? arr.Take(expectedCount).ToList() : arr;
-            }
-        }
-        catch { /* fall through */ }
-
-        // Last resort: empty strings so callers can fall back to original text.
-        if (expectedCount < 0) return [content];
-        return Enumerable.Repeat(string.Empty, expectedCount).ToList();
-    }
 }

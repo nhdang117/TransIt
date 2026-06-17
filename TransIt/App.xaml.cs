@@ -18,17 +18,14 @@ public partial class App : Application
     private LayoutService _layout = null!;
     private TranslationService _translator = null!;
 
-    private SnapshotMode?  _snapshotMode;
-    private RegionMode?    _regionMode;
-    private RealtimeMode?  _realtimeMode;
-    private OcrDebugMode?  _ocrDebugMode;
-
-    private CancellationTokenSource? _realtimeCts;
-    private bool _realtimeActive;
+    private RegionMode?   _regionMode;
+    private SummaryMode?  _summaryMode;
+    private OcrDebugMode? _ocrDebugMode;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        //try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
 
         _settings   = AppSettings.Load();
         _ocr        = new OcrService();
@@ -36,28 +33,27 @@ public partial class App : Application
         _translator = new TranslationService(_settings);
         _overlay    = new OverlayWindow();
 
-        _snapshotMode = new SnapshotMode(_ocr, _layout, _translator, _settings, _overlay);
         _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
-        _realtimeMode = new RealtimeMode(_ocr, _layout, _translator, _settings, _overlay);
+        _summaryMode  = new SummaryMode(_ocr, _translator, _settings);
         _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
 
+        _overlay.AddRegionRequested += (_, _) => RunAddRegion();
+
         _tray = new TrayIconManager();
-        _tray.SnapshotRequested       += (_, _) => RunSnapshot();
-        _tray.RegionRequested         += (_, _) => RunRegion();
-        _tray.RealtimeToggleRequested += (_, _) => ToggleRealtime();
-        _tray.SettingsRequested       += (_, _) => OpenSettings();
+        _tray.RegionRequested   += (_, _) => RunRegion();
+        _tray.SettingsRequested += (_, _) => OpenSettings();
         _tray.Initialize();
 
         _hotkeys = new HotkeyManager();
         _hotkeys.Initialize();
         _hotkeys.HotkeyPressed += OnHotkey;
 
-        bool alt2 = _hotkeys.Register(HotkeyManager.ID_SNAPSHOT,  Infrastructure.NativeMethods.MOD_ALT,     Infrastructure.NativeMethods.VK_2);
-        bool ctrl2 = _hotkeys.Register(HotkeyManager.ID_REGION,   Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_2);
-        bool alt3 = _hotkeys.Register(HotkeyManager.ID_REALTIME,  Infrastructure.NativeMethods.MOD_ALT,     Infrastructure.NativeMethods.VK_3);
-        bool ctrl1 = _hotkeys.Register(HotkeyManager.ID_OCR_DEBUG, Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_1);
+        bool ctrl2       = _hotkeys.Register(HotkeyManager.ID_REGION,         Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_2);
+        bool ctrl3       = _hotkeys.Register(HotkeyManager.ID_SUMMARY,        Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_3);
+        bool ctrl1       = _hotkeys.Register(HotkeyManager.ID_OCR_DEBUG,      Infrastructure.NativeMethods.MOD_CONTROL, Infrastructure.NativeMethods.VK_1);
+        bool ctrlShift3  = _hotkeys.Register(HotkeyManager.ID_SUMMARY_SCROLL, Infrastructure.NativeMethods.MOD_CONTROL | Infrastructure.NativeMethods.MOD_SHIFT, Infrastructure.NativeMethods.VK_3);
 
-        if (!alt2 || !ctrl2 || !alt3 || !ctrl1)
+        if (!ctrl2 || !ctrl3 || !ctrl1 || !ctrlShift3)
             _tray.ShowBalloon("TransIt", "Some hotkeys could not be registered (already in use).", BalloonIcon.Warning);
 
         // First-run: open settings if no API key configured
@@ -69,19 +65,17 @@ public partial class App : Application
     {
         switch (id)
         {
-            case HotkeyManager.ID_SNAPSHOT:  RunSnapshot();    break;
-            case HotkeyManager.ID_REGION:    RunRegion();      break;
-            case HotkeyManager.ID_REALTIME:  ToggleRealtime(); break;
-            case HotkeyManager.ID_OCR_DEBUG: RunOcrDebug();    break;
+            case HotkeyManager.ID_REGION:         RunRegion();        break;
+            case HotkeyManager.ID_SUMMARY:        RunSummary();       break;
+            case HotkeyManager.ID_OCR_DEBUG:      RunOcrDebug();      break;
+            case HotkeyManager.ID_SUMMARY_SCROLL: RunScrollSummary(); break;
         }
     }
 
-    private void RunSnapshot()
+    private void RunRegion()
     {
         if (!CheckApiKey()) return;
-        _realtimeMode?.Deactivate();
-        _realtimeActive = false;
-        Task.Run(() => _snapshotMode!.ActivateAsync(CancellationToken.None))
+        Task.Run(() => _regionMode!.ActivateAsync(CancellationToken.None))
             .ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -90,12 +84,34 @@ public partial class App : Application
             });
     }
 
-    private void RunRegion()
+    private void RunSummary()
     {
         if (!CheckApiKey()) return;
-        _realtimeMode?.Deactivate();
-        _realtimeActive = false;
-        Task.Run(() => _regionMode!.ActivateAsync(CancellationToken.None))
+        Task.Run(() => _summaryMode!.ActivateAsync(CancellationToken.None))
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    Dispatcher.Invoke(() =>
+                        _tray.ShowBalloon("TransIt Error", t.Exception?.InnerException?.Message ?? "Unknown error", BalloonIcon.Error));
+            });
+    }
+
+    private void RunScrollSummary()
+    {
+        if (!CheckApiKey()) return;
+        Task.Run(() => _summaryMode!.ActivateScrollAsync(CancellationToken.None))
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    Dispatcher.Invoke(() =>
+                        _tray.ShowBalloon("TransIt Error", t.Exception?.InnerException?.Message ?? "Unknown error", BalloonIcon.Error));
+            });
+    }
+
+    private void RunAddRegion()
+    {
+        if (!CheckApiKey()) return;
+        Task.Run(() => _regionMode!.AddRegionAsync(CancellationToken.None))
             .ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -107,8 +123,6 @@ public partial class App : Application
     private void RunOcrDebug()
     {
         // No API key needed — this mode only runs OCR, no translation call.
-        _realtimeMode?.Deactivate();
-        _realtimeActive = false;
         Task.Run(() => _ocrDebugMode!.ActivateAsync(CancellationToken.None))
             .ContinueWith(t =>
             {
@@ -118,41 +132,14 @@ public partial class App : Application
             });
     }
 
-    private void ToggleRealtime()
-    {
-        if (!CheckApiKey()) return;
-        if (_realtimeActive)
-        {
-            _realtimeCts?.Cancel();
-            _realtimeMode?.Deactivate();
-            _realtimeActive = false;
-            _tray.ShowBalloon("TransIt", "Realtime mode stopped.", BalloonIcon.Info);
-        }
-        else
-        {
-            _realtimeActive = true;
-            _realtimeCts = new CancellationTokenSource();
-            _tray.ShowBalloon("TransIt", "Realtime translation started.", BalloonIcon.Info);
-            Task.Run(() => _realtimeMode!.ActivateAsync(_realtimeCts.Token))
-                .ContinueWith(t =>
-                {
-                    _realtimeActive = false;
-                    if (t.IsFaulted)
-                        Dispatcher.Invoke(() =>
-                            _tray.ShowBalloon("TransIt Error", t.Exception?.InnerException?.Message ?? "Unknown error", BalloonIcon.Error));
-                });
-        }
-    }
-
     private void OpenSettings()
     {
         var win = new SettingsWindow(_settings);
         win.ShowDialog();
         // Recreate translator with updated settings
-        _translator = new TranslationService(_settings);
-        _snapshotMode = new SnapshotMode(_ocr, _layout, _translator, _settings, _overlay);
+        _translator   = new TranslationService(_settings);
         _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
-        _realtimeMode = new RealtimeMode(_ocr, _layout, _translator, _settings, _overlay);
+        _summaryMode  = new SummaryMode(_ocr, _translator, _settings);
         _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
     }
 
@@ -166,8 +153,6 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _realtimeCts?.Cancel();
-        _realtimeMode?.Deactivate();
         _hotkeys.UnregisterAll();
         _hotkeys.Dispose();
         _tray.Dispose();

@@ -8,9 +8,7 @@ public class TrayIconManager : IDisposable
 {
     private TaskbarIcon? _trayIcon;
 
-    public event EventHandler? SnapshotRequested;
     public event EventHandler? RegionRequested;
-    public event EventHandler? RealtimeToggleRequested;
     public event EventHandler? SettingsRequested;
 
     public void Initialize()
@@ -23,9 +21,7 @@ public class TrayIconManager : IDisposable
         };
 
         var menu = new ContextMenu();
-        menu.Items.Add(MakeItem("📸 Snapshot (Alt+2)",   (_, _) => SnapshotRequested?.Invoke(this, EventArgs.Empty)));
         menu.Items.Add(MakeItem("✂ Region (Ctrl+2)",     (_, _) => RegionRequested?.Invoke(this, EventArgs.Empty)));
-        menu.Items.Add(MakeItem("🔄 Realtime (Alt+3)",   (_, _) => RealtimeToggleRequested?.Invoke(this, EventArgs.Empty)));
         menu.Items.Add(new Separator());
         menu.Items.Add(MakeItem("⚙ Settings",            (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty)));
         menu.Items.Add(new Separator());

@@ -14,13 +14,16 @@ public partial class OverlayWindow : Window
     private bool _annotationMode;
     private IntPtr _kbHook = IntPtr.Zero;
     private NativeMethods.LowLevelKeyboardProc? _kbProcDelegate;
+    private List<OverlayTextItem> _currentItems = [];
 
     public event EventHandler? EscapePressed;
+    public event EventHandler? AddRegionRequested;
 
     public OverlayWindow()
     {
         InitializeComponent();
-        Canvas.CloseRequested += (_, _) => HideOverlay();
+        Canvas.CloseRequested     += (_, _) => HideOverlay();
+        Canvas.AddRegionRequested += (_, _) => AddRegionRequested?.Invoke(this, EventArgs.Empty);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -67,13 +70,13 @@ public partial class OverlayWindow : Window
     /// paragraph blocks (red), and detected layout regions (cyan dashed) over a
     /// frozen screenshot, no translation involved.
     public void ShowDebugOverlay(IList<Rect> lineRects, IList<Rect> blockRects, BitmapSource background,
-                                  IList<Rect>? regionRects = null)
+                                  IList<Rect>? regionRects = null, IList<Rect>? mergeZoneRects = null)
     {
         PositionOnVirtualScreen();
         Canvas.SetFrozenBackground(background);
         Canvas.ShowLoading(false);
         Canvas.RenderItems([]);
-        Canvas.RenderDebugRects(lineRects, blockRects, regionRects);
+        Canvas.RenderDebugRects(lineRects, blockRects, regionRects, mergeZoneRects);
         Canvas.ShowAnnotationToolbar(false);
         _annotationMode = false;
         SetClickThrough(false);
@@ -98,12 +101,26 @@ public partial class OverlayWindow : Window
 
     public void UpdateWithTranslation(IList<OverlayTextItem> items)
     {
+        _currentItems = [..items];
         Canvas.ShowLoading(false);
-        Canvas.RenderItems(items);
+        Canvas.RenderItems(_currentItems);
+        EnterAnnotationMode();
+    }
+
+    public void UpdateWithTranslationAndDebug(IList<OverlayTextItem> items,
+        IList<Rect> lineRects, IList<Rect> blockRects,
+        IList<Rect>? regionRects = null, IList<Rect>? mergeZoneRects = null)
+    {
+        _currentItems = [..items];
+        Canvas.ShowLoading(false);
+        Canvas.RenderItems(_currentItems);
+        Canvas.RenderDebugRects(lineRects, blockRects, regionRects, mergeZoneRects);
+        EnterAnnotationMode();
     }
 
     public void HideOverlay()
     {
+        _currentItems.Clear();
         UninstallEscHook();
         Canvas.ShowLoading(false);
         Canvas.SetFrozenBackground(null);
@@ -111,6 +128,12 @@ public partial class OverlayWindow : Window
         Hide();
         Canvas.ClearInk();
         EscapePressed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void AddTranslationItems(IList<OverlayTextItem> newItems)
+    {
+        _currentItems.AddRange(newItems);
+        Canvas.RenderItems(_currentItems);
     }
 
     private void InstallEscHook()

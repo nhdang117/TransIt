@@ -51,14 +51,15 @@
 
         <!-- Layer 4: annotation toolbar -->
         <Border x:Name="Toolbar"
-                VerticalAlignment="Bottom"
+                VerticalAlignment="Top"
                 HorizontalAlignment="Center"
-                Margin="0,0,0,16"
+                Margin="0,16,0,0"
                 Background="#CC1E1E1E"
                 CornerRadius="8"
                 Padding="8,4"
                 Visibility="Collapsed">
             <StackPanel Orientation="Horizontal" >
+                <Button Content="+" Click="BtnAddRegion_Click" Margin="4,0" Padding="8,4" FontWeight="Bold" FontSize="14" />
                 <Button Content="✏ Pen"    Click="BtnPen_Click"    Margin="4,0" Padding="8,4" />
                 <Button Content="⬤ Color"  Click="BtnColor_Click"  Margin="4,0" Padding="8,4" />
                 <Button Content="✕ Erase"  Click="BtnErase_Click"  Margin="4,0" Padding="8,4" />

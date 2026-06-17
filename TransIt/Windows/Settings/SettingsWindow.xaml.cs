@@ -30,7 +30,7 @@ public partial class SettingsWindow : Window
         LblInterval.Text     = $"{_settings.RealtimeIntervalMs} ms";
         RbOverlayMode.IsChecked   = _settings.RegionOverlayMode;
         RbTextPaneMode.IsChecked  = !_settings.RegionOverlayMode;
-        CbVisionApi.IsChecked     = _settings.UseVisionApi;
+        CbShowDebugRects.IsChecked = _settings.ShowDebugRects;
 
         UpdateProviderPanels();
     }
@@ -65,7 +65,7 @@ public partial class SettingsWindow : Window
         _settings.TargetLanguage  = TbTargetLang.Text.Trim();
         _settings.RealtimeIntervalMs = (int)SlInterval.Value;
         _settings.RegionOverlayMode  = RbOverlayMode.IsChecked == true;
-        _settings.UseVisionApi       = CbVisionApi.IsChecked == true;
+        _settings.ShowDebugRects     = CbShowDebugRects.IsChecked == true;
         _settings.Save();
         DialogResult = true;
         Close();

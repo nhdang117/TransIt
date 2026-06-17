@@ -17,7 +17,7 @@ public class AppSettings
     public int RealtimeIntervalMs  { get; set; } = 2000;
     public double OverlayOpacity   { get; set; } = 1.0;
     public bool   RegionOverlayMode { get; set; } = true;
-    public bool   UseVisionApi      { get; set; } = false;
+    public bool   ShowDebugRects    { get; set; } = false;
 
     [JsonIgnore]
     private static readonly string _settingsPath =

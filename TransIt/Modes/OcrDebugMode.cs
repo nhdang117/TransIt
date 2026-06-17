@@ -42,19 +42,19 @@ public class OcrDebugMode : ITranslationMode
         });
 
         var tcs = new TaskCompletionSource<bool>();
-        RegionSelectWindow selector = null!;
+        WindowPickerOverlay picker = null!;
         Application.Current.Dispatcher.Invoke(() =>
         {
-            selector = new RegionSelectWindow();
-            selector.Closed += (_, _) => tcs.TrySetResult(true);
-            selector.Show();
+            picker = new WindowPickerOverlay();
+            picker.Closed += (_, _) => tcs.TrySetResult(true);
+            picker.Show();
         });
         await tcs.Task;
 
-        if (selector.Cancelled || selector.SelectedRect is null) return;
+        if (picker.Cancelled || picker.SelectedPhysRect is null) return;
         ct.ThrowIfCancellationRequested();
 
-        var physRect = selector.SelectedRect.Value;
+        var physRect = picker.SelectedPhysRect.Value;
         var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
             physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
         using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
@@ -112,9 +112,12 @@ public class OcrDebugMode : ITranslationMode
                 physical.X / dpiScale + monLogX, physical.Y / dpiScale + monLogY,
                 physical.Width / dpiScale, physical.Height / dpiScale);
 
-            var lineRects   = lines.Select(l => ToLogical(l.BoundingRect)).ToList();
-            var blockRects  = blocks.Select(b => ToLogical(b.BoundingRect)).ToList();
-            var regionRects = regions.Select(r => ToLogical(r.BoundingRect)).ToList();
+            var lineRects      = lines.Select(l => ToLogical(l.BoundingRect)).ToList();
+            var blockRects     = blocks.Select(b => ToLogical(b.BoundingRect)).ToList();
+            var regionRects    = regions.Select(r => ToLogical(r.BoundingRect)).ToList();
+            var mergeZoneRects = regions.Count > 0
+                ? OcrBlock.GetMergeZoneRects(lines, regions).Select(ToLogical).ToList()
+                : [];
 
             // Same shape RegionMode/SnapshotMode/RealtimeMode build right before calling
             // TranslationService.TranslateBlocksAsync — physical-pixel rect, not logical DIPs.
@@ -132,7 +135,7 @@ public class OcrDebugMode : ITranslationMode
 
             Application.Current.Dispatcher.Invoke(() =>
             {
-                _overlay.ShowDebugOverlay(lineRects, blockRects, background, regionRects);
+                _overlay.ShowDebugOverlay(lineRects, blockRects, background, regionRects, mergeZoneRects);
 
                 var pane = new TextPaneWindow();
                 _activePane = pane;

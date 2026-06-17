@@ -5,6 +5,7 @@ using System.Windows.Ink;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using TransIt.Models;
 using TransIt.Services;
@@ -14,6 +15,7 @@ namespace TransIt.Windows.Overlay;
 public partial class OverlayCanvas : UserControl
 {
     public event EventHandler? CloseRequested;
+    public event EventHandler? AddRegionRequested;
     private Color _penColor = Colors.Red;
     private Storyboard? _spinnerBoard;
 
@@ -39,9 +41,10 @@ public partial class OverlayCanvas : UserControl
             var border = new Border
             {
                 Background = new SolidColorBrush(item.BackgroundColor),
+                BorderThickness = new Thickness(1),
                 Width = item.ScreenRect.Width,
-                // No fixed Height — translated text may be longer than the OCR source box;
-                // clipping it causes paragraphs to appear missing.
+                Height = item.ScreenRect.Height,
+                ClipToBounds = true,
             };
 
             var tb = new TextBlock
@@ -50,7 +53,7 @@ public partial class OverlayCanvas : UserControl
                 Foreground = new SolidColorBrush(item.ForegroundColor),
                 FontSize = item.FontSize,
                 TextWrapping = TextWrapping.Wrap,
-                VerticalAlignment = VerticalAlignment.Top
+                VerticalAlignment = VerticalAlignment.Top,
             };
 
             border.Child = tb;
@@ -60,12 +63,27 @@ public partial class OverlayCanvas : UserControl
         }
     }
 
-    // Ctrl+1 test mode: yellow = raw PaddleOCR line boxes, red = paragraph blocks
-    // (OcrBlock.GroupLines/GroupLinesWithLayout), cyan dashed = detected PP-Structure
-    // layout regions (Text/Title/List/Table/Figure).
-    public void RenderDebugRects(IList<Rect> lineRects, IList<Rect> blockRects, IList<Rect>? regionRects = null)
+    // Ctrl+1 test mode: gray fill = merge-zone expand rects (GroupLinesInRegion threshold),
+    // yellow = raw PaddleOCR line boxes, red = paragraph blocks, cyan dashed = PP-Structure regions.
+    public void RenderDebugRects(IList<Rect> lineRects, IList<Rect> blockRects,
+                                  IList<Rect>? regionRects = null, IList<Rect>? mergeZoneRects = null)
     {
         DebugLayer.Children.Clear();
+
+        var mergeZoneBrush = new SolidColorBrush(Color.FromArgb(55, 160, 160, 160));
+        foreach (var r in mergeZoneRects ?? [])
+        {
+            var shape = new System.Windows.Shapes.Rectangle
+            {
+                Width = r.Width,
+                Height = r.Height,
+                Fill = mergeZoneBrush,
+                StrokeThickness = 0,
+            };
+            Canvas.SetLeft(shape, r.X);
+            Canvas.SetTop(shape, r.Y);
+            DebugLayer.Children.Add(shape);
+        }
 
         foreach (var r in regionRects ?? [])
             DebugLayer.Children.Add(MakeRect(r, Colors.Cyan, 3, dashed: true));
@@ -77,7 +95,8 @@ public partial class OverlayCanvas : UserControl
             DebugLayer.Children.Add(MakeRect(r, Colors.Red, 2));
     }
 
-    private static System.Windows.Shapes.Rectangle MakeRect(Rect r, Color stroke, double thickness, bool dashed = false)
+    private static System.Windows.Shapes.Rectangle MakeRect(
+        Rect r, Color stroke, double thickness, bool dashed = false)
     {
         var shape = new System.Windows.Shapes.Rectangle
         {
@@ -138,6 +157,9 @@ public partial class OverlayCanvas : UserControl
     }
 
     // ── Toolbar handlers ──────────────────────────────────────────────────────
+
+    private void BtnAddRegion_Click(object sender, RoutedEventArgs e) =>
+        AddRegionRequested?.Invoke(this, EventArgs.Empty);
 
     private void BtnPen_Click(object sender, RoutedEventArgs e)
     {

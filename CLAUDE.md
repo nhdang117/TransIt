@@ -95,14 +95,9 @@ All blocks from one capture are sent in a single API call. `RunOverlayMode`/`Run
 
 ### Font Size Estimation
 
-`FontSizeEstimator.Estimate(lineHeightDIP, blockText)` converts OCR tight-box height to WPF `FontSize`:
-- Text with descenders (`g j p q y`): multiply by 1.05 (box ≈ 0.95× em)
-- Text without descenders: multiply by 1.43 (box ≈ 0.70× em)
-- Clamped to [12, 96]
+`OverlayTextItem.Build()` calls `TextFitter.FitFontSize(translatedText, logicalRect.Width, logicalRect.Height)` — binary search [8, 96] finds the largest `FontSize` where `FormattedText` (wrapped at `logicalRect.Width`) fits within `logicalRect.Height`. The render border has fixed `Width` and `Height` matching the OCR block rect; `ClipToBounds = true` prevents overflow. Translated text that is longer than the source gets a proportionally smaller font — typically ~20% smaller for a ~20% longer translation, still readable.
 
-Uses per-line average height, not `block.BoundingRect.Height / lineCount` (union rect includes inter-line gaps).
-
-`OverlayTextItem.Build()` then runs `TextFitter.FitFontSize(translatedText, fontSize, width, availableHeight)` on top of the estimate — translated text is often longer than the source, so the render border already has no fixed height and auto-grows; `TextFitter` only shrinks the font (1.0 step, floor 8.0) when the wrapped text would overflow a generous height budget (`max(rectHeight, lineHeight*lineCount) * 2.5`), guarding the pathological case (e.g. one short source word translating to a long phrase) without affecting normal-length translations.
+`FontSizeEstimator` (in `Services/FontSizeEstimator.cs`) remains in the codebase but is not currently used by `Build()`.
 
 ### Key Files
 
@@ -111,7 +106,7 @@ Uses per-line average height, not `block.BoundingRect.Height / lineCount` (union
 - **`Core/OcrService.cs`** — wraps `PaddleOCRSharp.PaddleOCREngine` (single shared instance, `OCRModelConfig.V5_CN` — a combined English+Chinese model, so `languageTag` is accepted for signature compatibility but otherwise unused). `DetectText(Bitmap)` returns flat word/phrase-level `TextBlock`s (not pre-grouped lines), so `OcrService` row-clusters them by Y-proximity (splitting on large horizontal gaps to keep side-by-side columns apart) before building `OcrLine`s. `PaddleOCREngine.Dispose()` is a plain method, not `IDisposable` — `OcrService` itself implements `IDisposable` and is disposed from `App.xaml.cs OnExit`.
 - **`Core/ScreenCaptureService.cs`** — `CaptureMonitorAtCursor()` returns `(Bitmap, dpiScale)`; `CaptureRegion(physRect)` captures arbitrary physical rect.
 - **`Models/OcrBlock.cs`** — paragraph grouping via union-find over all line pairs (not just Y-sorted neighbors — needed because interleaved multi-column input puts a same-column line's neighbor in sort order in the *other* column): merge when vertical gap < 1.5× local line height **and** lines horizontally overlap or are within 0.5× local height of each other.
-- **`Models/OverlayTextItem.cs`** — `Build()` factory: samples bg/fg colors from bitmap, calls `FontSizeEstimator`, converts physical rect to logical DIPs.
+- **`Models/OverlayTextItem.cs`** — `Build()` factory: samples bg/fg colors from bitmap, calls `TextFitter.FitFontSize` to binary-search the largest font that fits translated text in the OCR block rect, converts physical rect to logical DIPs.
 - **`Services/ChangeDetector.cs`** — perceptual hash (16×16 average hash, Hamming distance < 5 threshold) skips redundant OCR on static screens.
 - **`Modes/RealtimeMode.cs`** — `PeriodicTimer` loop; skips tick if `_isProcessing`; `WinEventHook` forces immediate re-capture on foreground app change.
 
@@ -119,6 +114,3 @@ Uses per-line average height, not `block.BoundingRect.Height / lineCount` (union
 
 Persisted to `%APPDATA%\TransIt\settings.json`. `AppSettings.HasValidApiKey` gates all hotkey actions. First run auto-opens `SettingsWindow`. `UseVisionApi` only applies when `Provider == OpenAI`.
 
-### Debug Log
-
-`OverlayTextItem.Build()` appends sizing diagnostics to `%APPDATA%\TransIt\overlay_debug.log` (dpi, physical height, line count, logical height, font size). Remove once font-size tuning is confirmed.
