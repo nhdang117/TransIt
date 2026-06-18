@@ -127,15 +127,97 @@ public class TranslationService
 
     // ── Summarize ─────────────────────────────────────────────────────────────
 
-    public static string GetSummarizeImagesSystemPrompt(int sliceCount, string sourceLang) =>
-        $"You are a summarization assistant. The user captured a long page and split it into {sliceCount} vertical slices (top to bottom, with slight overlap). " +
-        $"Read all slices in order as a single continuous document and produce a comprehensive summary in Vietnamese. " +
-        $"The source content is in {sourceLang}. " +
-        $"Structure your response exactly:\n" +
-        $"1. One short paragraph (2-3 sentences) capturing the overall topic.\n" +
-        $"2. A blank line.\n" +
-        $"3. Key points as bullet list using '•', one per line, each brief (1 sentence max).\n" +
-        $"No headings, no markdown fences, no extra commentary.";
+    public static string GetSummarizeImagesSystemPrompt(int sliceCount, string sourceLang, string contentType = "other")
+    {
+        var preamble = $"You are a summarization assistant. The user captured a long page and split it into {sliceCount} vertical slices (top to bottom, with slight overlap). Read all slices in order as a single continuous document. The source content is in {sourceLang}. Respond in Vietnamese.";
+
+        return contentType switch
+        {
+            "email" =>
+                preamble +
+                "\n\nThe content is an email thread captured top-to-bottom, meaning the NEWEST message appears first and the OLDEST last. Ignore From/To/CC/Subject/Date headers, signatures, footers, and legal disclaimers." +
+                "\n\nStructure your response exactly:" +
+                "\n1. One line: 'Chủ đề: [one-sentence subject summary of the whole thread]'." +
+                "\n2. A blank line." +
+                "\n3. Thread flow in CHRONOLOGICAL order (oldest → newest): list each message as '• [Người gửi]: [tóm tắt 1 câu nội dung]'." +
+                "\n4. A blank line." +
+                "\n5. Only if the thread contains actions, confirmations, or deadlines for the user: add a blank line then 'Hành động cần làm:' followed by bullet list. If none exist, omit this section entirely." +
+                "\nNo headings, no markdown fences, no extra commentary.",
+
+            "code" =>
+                preamble +
+                "\n\nThe content is source code." +
+                "\n\nStructure your response exactly:" +
+                "\n1. One line: 'Ngôn ngữ: [detected language]'." +
+                "\n2. A blank line." +
+                "\n3. One short paragraph (2-3 sentences) describing the overall purpose." +
+                "\n4. A blank line." +
+                "\n5. Function/method summary as bullet list: '• [tên hàm]: [mục đích 1 câu]', one per line." +
+                "\nNo markdown fences, no extra commentary.",
+
+            "document" or "webpage" =>
+                preamble +
+                "\n\nIgnore navigation bars, ads, sidebars, headers, and footers — focus on the main content." +
+                "\n\nStructure your response exactly:" +
+                "\n1. One short paragraph (2-3 sentences) capturing the overall topic." +
+                "\n2. A blank line." +
+                "\n3. Key points as bullet list using '•', one per line, each brief (1 sentence max)." +
+                "\nNo headings, no markdown fences, no extra commentary.",
+
+            _ =>
+                preamble +
+                "\n\nStructure your response exactly:" +
+                "\n1. One short paragraph (2-3 sentences) capturing the overall topic." +
+                "\n2. A blank line." +
+                "\n3. Key points as bullet list using '•', one per line, each brief (1 sentence max)." +
+                "\nNo headings, no markdown fences, no extra commentary."
+        };
+    }
+
+    // Sends a full-screen screenshot to the model and returns a single content-type word.
+    // Used to adapt the summarize system prompt before scroll-capture sessions.
+    public static async Task<string> DetectContentTypeAsync(
+        string apiKey, string model, byte[] jpeg, CancellationToken ct = default)
+    {
+        // Detection requires a vision-capable model regardless of the user's configured model.
+        // gpt-4o-mini supports image input, is fast, and cheap (~5 output tokens).
+        var visionModel = model.StartsWith("gpt-4o") ? model : "gpt-4o-mini";
+        var b64 = Convert.ToBase64String(jpeg);
+        var body = new
+        {
+            model = visionModel,
+            messages = new object[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new { type = "text", text = "Look at this screenshot. What type of content is primarily shown? Reply with exactly one word: email, document, code, webpage, or other." },
+                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{b64}", detail = "low" } }
+                    }
+                }
+            },
+            max_tokens = 5,
+            temperature = 0
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+
+        var resp = await _http.SendAsync(request, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+        var doc = JsonNode.Parse(json);
+        var word = doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
+                       ?.Trim().ToLowerInvariant() ?? "other";
+
+        return word is "email" or "document" or "code" or "webpage" ? word : "other";
+    }
 
     public static string GetSummarizeTextSystemPrompt(string sourceLang) =>
         $"You are a summarization assistant. Summarize the following text in Vietnamese. " +

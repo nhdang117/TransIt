@@ -1,5 +1,6 @@
 #pragma warning disable OPENAI001
 
+using System.IO;
 using OpenAI;
 using OpenAI.Assistants;
 using OpenAI.Files;
@@ -7,7 +8,8 @@ using OpenAI.Files;
 namespace TransIt.Core;
 
 // Manages a single summarize+chat session via the OpenAI Assistants API.
-// Images are uploaded once; follow-up messages only send text — no base64 re-uploads.
+// Images are uploaded via Files API (purpose=vision), then referenced by file ID.
+// Follow-up messages only send text — assistant retains thread context.
 // Call DisposeAsync on window close to delete the thread, assistant, and uploaded files.
 public sealed class AssistantsChatService : IAsyncDisposable
 {
@@ -17,7 +19,7 @@ public sealed class AssistantsChatService : IAsyncDisposable
 
     private string? _assistantId;
     private string? _threadId;
-    private readonly List<string> _fileIds = [];
+    private readonly List<string> _uploadedFileIds = new();
 
     public AssistantsChatService(string apiKey, string model)
     {
@@ -27,29 +29,14 @@ public sealed class AssistantsChatService : IAsyncDisposable
         _model = model;
     }
 
-    // Uploads image slices, creates assistant + thread, runs initial summarize.
+    // Creates assistant + thread, uploads images as vision files, runs initial summarize.
     public async Task<string> StartImageSessionAsync(
-        IList<byte[]> images, string sourceLang, CancellationToken ct)
+        IList<byte[]> images, string sourceLang, string contentType = "other", CancellationToken ct = default)
     {
-        foreach (var jpeg in images)
-        {
-            ct.ThrowIfCancellationRequested();
-            var uploaded = await _fileClient.UploadFileAsync(
-                BinaryData.FromBytes(jpeg), "slice.jpg", FileUploadPurpose.Vision);
-            _fileIds.Add(uploaded.Value.Id);
-        }
-
         await CreateAssistantAndThreadAsync(
-            TranslationService.GetSummarizeImagesSystemPrompt(images.Count, sourceLang));
+            TranslationService.GetSummarizeImagesSystemPrompt(images.Count, sourceLang, contentType));
 
-        var parts = new List<MessageContent>
-        {
-            MessageContent.FromText($"Here are {images.Count} vertical slices of a stitched page (top to bottom):")
-        };
-        foreach (var fid in _fileIds)
-            parts.Add(MessageContent.FromImageFileId(fid, null));
-
-        await _assistantClient.CreateMessageAsync(_threadId!, MessageRole.User, parts, cancellationToken: ct);
+        await CreateImageMessageRawAsync(_threadId!, images, ct);
         return await RunAndGetResponseAsync(ct);
     }
 
@@ -67,7 +54,6 @@ public sealed class AssistantsChatService : IAsyncDisposable
     }
 
     // Adds a follow-up message to the existing thread and returns the AI response.
-    // Images are NOT re-sent — the assistant retains context from prior thread runs.
     public async Task<string> SendMessageAsync(string userMessage, CancellationToken ct)
     {
         if (_threadId is null || _assistantId is null)
@@ -77,6 +63,23 @@ public sealed class AssistantsChatService : IAsyncDisposable
             [MessageContent.FromText(userMessage)], cancellationToken: ct);
 
         return await RunAndGetResponseAsync(ct);
+    }
+
+    private async Task CreateImageMessageRawAsync(string threadId, IList<byte[]> images, CancellationToken ct)
+    {
+        var contentParts = new List<MessageContent>
+        {
+            MessageContent.FromText($"Here are {images.Count} vertical slices of a stitched page (top to bottom):")
+        };
+        foreach (var jpeg in images)
+        {
+            using var stream = new MemoryStream(jpeg);
+            var uploaded = await _fileClient.UploadFileAsync(stream, "image.jpg", FileUploadPurpose.Vision, ct);
+            _uploadedFileIds.Add(uploaded.Value.Id);
+            contentParts.Add(MessageContent.FromImageFileId(uploaded.Value.Id));
+        }
+
+        await _assistantClient.CreateMessageAsync(threadId, MessageRole.User, contentParts, cancellationToken: ct);
     }
 
     private async Task CreateAssistantAndThreadAsync(string systemPrompt)
@@ -125,7 +128,7 @@ public sealed class AssistantsChatService : IAsyncDisposable
         if (_assistantId is not null)
             try { await _assistantClient.DeleteAssistantAsync(_assistantId); } catch { }
 
-        foreach (var fid in _fileIds)
-            try { await _fileClient.DeleteFileAsync(fid); } catch { }
+        foreach (var fileId in _uploadedFileIds)
+            try { await _fileClient.DeleteFileAsync(fileId); } catch { }
     }
 }

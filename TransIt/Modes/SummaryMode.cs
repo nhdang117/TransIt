@@ -89,6 +89,16 @@ public class SummaryMode : ITranslationMode
 
     public async Task ActivateScrollAsync(CancellationToken ct)
     {
+        // Capture full screen before any overlay appears — gives AI app chrome + title bar context.
+        Task<string> detectTask;
+        var fullCapture = ScreenCaptureService.CaptureMonitorAtCursor();
+        using (fullCapture.bitmap)
+        {
+            var fullJpeg = BitmapToJpeg(fullCapture.bitmap, maxWidth: 1280);
+            detectTask = TranslationService.DetectContentTypeAsync(
+                _settings.OpenAiApiKey, _settings.OpenAiModel, fullJpeg, ct);
+        }
+
         // Phase 1: region selection
         var tcs = new TaskCompletionSource<bool>();
         WindowPickerOverlay picker = null!;
@@ -261,11 +271,14 @@ public class SummaryMode : ITranslationMode
             chat.ShowLoading();
         });
 
+        string contentType = "other";
+        try { contentType = await detectTask; } catch { }
+
         AssistantsChatService? service = null;
         try
         {
             service = new AssistantsChatService(_settings.OpenAiApiKey, _settings.OpenAiModel);
-            var summary = await service.StartImageSessionAsync(slices, _settings.SourceLanguage, ct);
+            var summary = await service.StartImageSessionAsync(slices, _settings.SourceLanguage, contentType, ct);
             Application.Current.Dispatcher.Invoke(() =>
             {
                 if (_activeChat == chat) chat!.AddSummary(summary, service);
