@@ -127,6 +127,25 @@ public class TranslationService
 
     // ── Summarize ─────────────────────────────────────────────────────────────
 
+    public static string GetSummarizeImagesSystemPrompt(int sliceCount, string sourceLang) =>
+        $"You are a summarization assistant. The user captured a long page and split it into {sliceCount} vertical slices (top to bottom, with slight overlap). " +
+        $"Read all slices in order as a single continuous document and produce a comprehensive summary in Vietnamese. " +
+        $"The source content is in {sourceLang}. " +
+        $"Structure your response exactly:\n" +
+        $"1. One short paragraph (2-3 sentences) capturing the overall topic.\n" +
+        $"2. A blank line.\n" +
+        $"3. Key points as bullet list using '•', one per line, each brief (1 sentence max).\n" +
+        $"No headings, no markdown fences, no extra commentary.";
+
+    public static string GetSummarizeTextSystemPrompt(string sourceLang) =>
+        $"You are a summarization assistant. Summarize the following text in Vietnamese. " +
+        $"The source text is in {sourceLang}. " +
+        $"IMPORTANT: Structure your response in exactly this format:\n" +
+        $"1. One short concise paragraph (2-3 sentences max) capturing the overall meaning.\n" +
+        $"2. A blank line.\n" +
+        $"3. Key points as a bullet list using '•' character, one point per line, each point brief (1 sentence max).\n" +
+        $"No headings, no extra commentary, no markdown fences. Return only the paragraph and bullet list.";
+
     // Sends captured scroll screenshots to OpenAI Vision API and returns a Vietnamese summary.
     // Each jpeg is sent as a low-detail image_url part to keep token cost minimal (~85 tokens/image).
     public async Task<string> SummarizeImagesAsync(
@@ -138,19 +157,11 @@ public class TranslationService
         if (_settings.Provider != TranslationProvider.OpenAI)
             throw new NotSupportedException("Image summarization requires OpenAI provider.");
 
-        var systemPrompt =
-            $"You are a summarization assistant. The user captured a series of scrolling screenshots. " +
-            $"Analyze all images in reading order and produce a comprehensive summary in Vietnamese. " +
-            $"The source content is in {sourceLang}. " +
-            $"Structure your response exactly:\n" +
-            $"1. One short paragraph (2-3 sentences) capturing the overall topic.\n" +
-            $"2. A blank line.\n" +
-            $"3. Key points as bullet list using '•', one per line, each brief (1 sentence max).\n" +
-            $"No headings, no markdown fences, no extra commentary.";
+        var systemPrompt = GetSummarizeImagesSystemPrompt(jpegImages.Count, sourceLang);
 
         var contentParts = new List<object>
         {
-            new { type = "text", text = $"Here are {jpegImages.Count} scrolling screenshots to summarize:" }
+            new { type = "text", text = $"Here are {jpegImages.Count} vertical slices of a stitched page (top to bottom):" }
         };
         foreach (var jpeg in jpegImages)
         {
@@ -158,7 +169,7 @@ public class TranslationService
             contentParts.Add(new
             {
                 type = "image_url",
-                image_url = new { url = $"data:image/jpeg;base64,{b64}", detail = "low" }
+                image_url = new { url = $"data:image/jpeg;base64,{b64}", detail = "high" }
             });
         }
 
@@ -201,14 +212,7 @@ public class TranslationService
         if (_settings.Provider != TranslationProvider.OpenAI)
             throw new NotSupportedException("Summarization requires OpenAI provider.");
 
-        var systemPrompt =
-            $"You are a summarization assistant. Summarize the following text in Vietnamese. " +
-            $"The source text is in {sourceLang}. " +
-            $"IMPORTANT: Structure your response in exactly this format:\n" +
-            $"1. One short concise paragraph (2-3 sentences max) capturing the overall meaning.\n" +
-            $"2. A blank line.\n" +
-            $"3. Key points as a bullet list using '•' character, one point per line, each point brief (1 sentence max).\n" +
-            $"No headings, no extra commentary, no markdown fences. Return only the paragraph and bullet list.";
+        var systemPrompt = GetSummarizeTextSystemPrompt(sourceLang);
 
         var body = new
         {
@@ -230,6 +234,82 @@ public class TranslationService
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
 
         var resp = await _http.SendAsync(request, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+
+        var doc = JsonNode.Parse(json);
+        return doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()
+               ?? throw new Exception("Unexpected OpenAI response shape.");
+    }
+
+    // ── Chat ──────────────────────────────────────────────────────────────────
+
+    // Multi-turn chat continuing from an initial summarize context (images or text).
+    // contextImages XOR contextText must be non-null — they represent the first user message.
+    // history contains all turns after the initial exchange (alternating user/assistant).
+    public async Task<string> ChatAsync(
+        string systemPrompt,
+        IList<byte[]>? contextImages,
+        string? contextText,
+        IList<(string Role, string Content)> history,
+        string newUserMessage,
+        CancellationToken ct = default)
+    {
+        if (_settings.Provider != TranslationProvider.OpenAI)
+            throw new NotSupportedException("Chat requires OpenAI provider.");
+
+        var messages = new List<object>
+        {
+            new { role = "system", content = systemPrompt }
+        };
+
+        // First user message: images or text from the initial capture
+        if (contextImages != null && contextImages.Count > 0)
+        {
+            var parts = new List<object>
+            {
+                new { type = "text", text = $"Here are {contextImages.Count} vertical slices of a stitched page (top to bottom):" }
+            };
+            foreach (var jpeg in contextImages)
+            {
+                var b64 = Convert.ToBase64String(jpeg);
+                parts.Add(new
+                {
+                    type = "image_url",
+                    image_url = new { url = $"data:image/jpeg;base64,{b64}", detail = "high" }
+                });
+            }
+            messages.Add(new { role = "user", content = (object)parts });
+        }
+        else if (!string.IsNullOrEmpty(contextText))
+        {
+            messages.Add(new { role = "user", content = (object)contextText });
+        }
+
+        // Prior conversation turns
+        foreach (var (role, content) in history)
+            messages.Add(new { role, content = (object)content });
+
+        // New user question
+        messages.Add(new { role = "user", content = (object)newUserMessage });
+
+        var body = new
+        {
+            model = _settings.OpenAiModel,
+            messages,
+            temperature = 0.7,
+            max_tokens = 2000
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.OpenAiApiKey);
+
+        var resp = await _httpVision.SendAsync(request, ct);
         resp.EnsureSuccessStatusCode();
         var json = await resp.Content.ReadAsStringAsync(ct);
 

@@ -5,7 +5,7 @@ using System.Windows;
 using TransIt.Core;
 using TransIt.Services;
 using TransIt.Windows.Selection;
-using TransIt.Windows.TextPane;
+using TransIt.Windows.Chat;
 using TransIt.Infrastructure;
 
 namespace TransIt.Modes;
@@ -13,14 +13,12 @@ namespace TransIt.Modes;
 public class SummaryMode : ITranslationMode
 {
     private readonly OcrService _ocr;
-    private readonly TranslationService _translator;
     private readonly AppSettings _settings;
-    private TextPaneWindow? _activePane;
+    private ChatWindow? _activeChat;
 
-    public SummaryMode(OcrService ocr, TranslationService translator, AppSettings settings)
+    public SummaryMode(OcrService ocr, AppSettings settings)
     {
         _ocr = ocr;
-        _translator = translator;
         _settings = settings;
     }
 
@@ -42,34 +40,48 @@ public class SummaryMode : ITranslationMode
         var physRect = picker.SelectedPhysRect.Value;
         using var bitmap = ScreenCaptureService.CaptureRegion(physRect);
 
-        TextPaneWindow? pane = null;
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            pane = new TextPaneWindow();
-            _activePane = pane;
-            pane.Closed += (_, _) => { if (_activePane == pane) _activePane = null; };
-            pane.ShowLoading();
-        });
-
-        try
-        {
-            var lines = await _ocr.RecognizeAsync(bitmap, _settings.SourceLanguage, ct);
-            if (lines.Count == 0)
-            {
-                Application.Current.Dispatcher.Invoke(() => pane!.ShowTranslation(["(No text detected)"]));
-                return;
-            }
-
-            var fullText = string.Join("\n", lines.Select(l => l.FullText));
-            var summary = await _translator.SummarizeAsync(fullText, _settings.SourceLanguage, ct);
-
-            Application.Current.Dispatcher.Invoke(() => pane!.ShowTranslation([summary]));
-        }
-        catch
+        var lines = await _ocr.RecognizeAsync(bitmap, _settings.SourceLanguage, ct);
+        if (lines.Count == 0)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                if (_activePane == pane) { pane?.Close(); _activePane = null; }
+                var emptyChat = new ChatWindow();
+                _activeChat = emptyChat;
+                emptyChat.Closed += (_, _) => { if (_activeChat == emptyChat) _activeChat = null; };
+                emptyChat.ShowLoading();
+                emptyChat.AddSummary("(No text detected)", null!);
+            });
+            return;
+        }
+
+        var fullText = string.Join("\n", lines.Select(l => l.FullText));
+
+        ChatWindow? chat = null;
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            chat = new ChatWindow();
+            _activeChat = chat;
+            chat.Closed += (_, _) => { if (_activeChat == chat) _activeChat = null; };
+            chat.ShowLoading();
+        });
+
+        AssistantsChatService? service = null;
+        try
+        {
+            service = new AssistantsChatService(_settings.OpenAiApiKey, _settings.OpenAiModel);
+            var summary = await service.StartTextSessionAsync(fullText, _settings.SourceLanguage, ct);
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (_activeChat == chat) chat!.AddSummary(summary, service);
+                else _ = service.DisposeAsync().AsTask();
+            });
+        }
+        catch
+        {
+            if (service is not null) await service.DisposeAsync();
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (_activeChat == chat) { chat?.Close(); _activeChat = null; }
             });
             throw;
         }
@@ -92,6 +104,14 @@ public class SummaryMode : ITranslationMode
         var physRect = picker.SelectedPhysRect.Value;
         var dpiScale = picker.SelectedDpiScale;
 
+        int cursorX = physRect.X + physRect.Width  / 2;
+        int cursorY = physRect.Y + physRect.Height / 2;
+
+        // Capture target HWND before overlays are shown — WindowFromPoint returns the real
+        // app at that point, not any of our overlays (which don't exist yet).
+        var centerPt = new NativeMethods.POINT { X = cursorX, Y = cursorY };
+        IntPtr targetHwnd = NativeMethods.WindowFromPoint(centerPt);
+
         CaptureRegionIndicator? indicator = null;
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -101,36 +121,32 @@ public class SummaryMode : ITranslationMode
 
         // Phase 2: show capture bar + preview strip
         var barTcs = new TaskCompletionSource<bool>(); // true=finalize, false=cancel
+        bool autoMode = false;
+        var stepSem = new SemaphoreSlim(0);
+        // Signals the step-wait when ct is cancelled, so the loop can exit cleanly.
+        var ctDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var ctReg = ct.Register(() => ctDone.TrySetResult());
+
         ScrollCaptureBar? bar = null;
         ScrollPreviewWindow? preview = null;
         Application.Current.Dispatcher.Invoke(() =>
         {
             bar = new ScrollCaptureBar();
-            bar.FinalizeRequested += (_, _) => barTcs.TrySetResult(true);
-            bar.CancelRequested   += (_, _) => barTcs.TrySetResult(false);
+            bar.FinalizeRequested   += (_, _) => barTcs.TrySetResult(true);
+            bar.CancelRequested     += (_, _) => barTcs.TrySetResult(false);
+            bar.StepRequested       += (_, _) => stepSem.Release();
+            bar.AutoScrollRequested += (_, _) => { autoMode = true; stepSem.Release(); };
             bar.Show();
+            bar.PositionAboveRect(physRect, dpiScale);
 
             preview = new ScrollPreviewWindow();
             preview.Show();
+            preview.PositionAboveRect(physRect, dpiScale, bar.Top);
         });
 
-        // Phase 3: auto-scroll with hash-triggered capture.
-        // Scroll 1 notch at a time (50ms each). Capture only when Hamming distance from
-        // the last captured frame exceeds the overlap threshold — this fires naturally when
-        // ~80% of the viewport has scrolled, giving ~20% overlap without SampleFrames.
-        // Bottom detection: hash barely changes between consecutive ticks.
-        var capturedFrames = new List<byte[]>();
-
-        int cursorX = physRect.X + physRect.Width  / 2;
-        int cursorY = physRect.Y + physRect.Height / 2;
-
-        // Pre-build 3-notch scroll input (reused every tick).
-        // 3 notches per tick ensures PDF viewers move enough for the 16×16 hash to detect change.
-        var scrollInput = new NativeMethods.INPUT[1];
-        scrollInput[0].type = NativeMethods.INPUT_MOUSE;
-        scrollInput[0].mi.dwFlags = NativeMethods.MOUSEEVENTF_WHEEL;
-        scrollInput[0].mi.mouseData = unchecked((uint)(-3 * NativeMethods.WHEEL_DELTA));
-        int inputSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.INPUT>();
+        // Phase 3: scroll-capture loop.
+        using var stitcher = new IncrementalStitcher();
+        byte[] lastStitched = [];
 
         // Duplicate skip threshold: frames that differ by < 5 bits are essentially identical.
         const int DuplicateThreshold = 5;
@@ -142,10 +158,10 @@ public class SummaryMode : ITranslationMode
         // Capture first frame unconditionally.
         using (var first = ScreenCaptureService.CaptureRegion(physRect))
         {
-            capturedFrames.Add(BitmapToJpeg(first));
-            preview?.AddFrame(capturedFrames[^1]);
+            lastStitched = stitcher.Append(BitmapToJpeg(first));
+            preview?.UpdateStitched(lastStitched, stitcher.FrameCount);
         }
-        Application.Current.Dispatcher.Invoke(() => bar!.UpdateCount(1, false, "image"));
+        Application.Current.Dispatcher.Invoke(() => bar!.UpdateCount(stitcher.FrameCount, false, "image"));
 
         ulong lastCapturedHash;
         using (var tmp = ScreenCaptureService.CaptureRegion(physRect))
@@ -155,11 +171,20 @@ public class SummaryMode : ITranslationMode
 
         while (!barTcs.Task.IsCompleted && !ct.IsCancellationRequested)
         {
-            // Scroll 3 notches.
-            NativeMethods.SetCursorPos(cursorX, cursorY);
-            NativeMethods.SendInput(1, scrollInput, inputSize);
+            if (!autoMode)
+            {
+                // Wait for Step press, Auto press, Summarize/Cancel, or ct cancel.
+                await Task.WhenAny(stepSem.WaitAsync(), barTcs.Task, ctDone.Task);
+                if (barTcs.Task.IsCompleted || ct.IsCancellationRequested) break;
+                stableCount = 0; // explicit user action — reset bottom-detection
+                if (autoMode)
+                    Application.Current.Dispatcher.Invoke(() => bar!.SetStatus("Auto scrolling..."));
+            }
 
-            // 200ms gives PDF viewers (Foxit, Acrobat) time to finish animated scroll + render.
+            // Post WM_MOUSEWHEEL directly — no cursor movement, user can click Step repeatedly.
+            int wp = unchecked((int)((uint)(-3 * NativeMethods.WHEEL_DELTA) << 16));
+            int lp = unchecked((int)((uint)(ushort)cursorY << 16 | (uint)(ushort)cursorX));
+            NativeMethods.PostMessage(targetHwnd, NativeMethods.WM_MOUSEWHEEL, new IntPtr(wp), new IntPtr(lp));
             try { await Task.Delay(200, ct); }
             catch { break; }
 
@@ -172,16 +197,16 @@ public class SummaryMode : ITranslationMode
                 stableCount++;
                 if (stableCount >= StableFramesRequired)
                 {
-                    // Save final frame if it differs from last capture.
+                    // Append final frame if it differs from last capture.
                     if (HammingDistance(lastCapturedHash, hash) >= DuplicateThreshold)
                     {
-                        capturedFrames.Add(BitmapToJpeg(frame));
-                        preview?.AddFrame(capturedFrames[^1]);
-                        var fc = capturedFrames.Count;
+                        lastStitched = stitcher.Append(BitmapToJpeg(frame));
+                        preview?.UpdateStitched(lastStitched, stitcher.FrameCount);
+                        var fc = stitcher.FrameCount;
                         Application.Current.Dispatcher.Invoke(() => bar!.UpdateCount(fc, false, "image"));
                     }
-                    barTcs.TrySetResult(true); // auto-finalize on reaching bottom
-                    break;
+                    autoMode = false;
+                    Application.Current.Dispatcher.Invoke(() => bar!.SetStatus("Reached bottom — press Step to continue or Summarize"));
                 }
             }
             else
@@ -189,57 +214,70 @@ public class SummaryMode : ITranslationMode
                 stableCount = 0;
             }
 
-            // Capture every tick that has new content (skip near-identical frames only).
-            // SampleFrames handles the Vision API 20-image cap later.
+            // Append every tick that has new content (skip near-identical frames only).
             if (HammingDistance(lastCapturedHash, hash) >= DuplicateThreshold)
             {
-                capturedFrames.Add(BitmapToJpeg(frame));
+                lastStitched = stitcher.Append(BitmapToJpeg(frame));
                 lastCapturedHash = hash;
-                preview?.AddFrame(capturedFrames[^1]);
-                var count = capturedFrames.Count;
+                preview?.UpdateStitched(lastStitched, stitcher.FrameCount);
+                var count = stitcher.FrameCount;
                 Application.Current.Dispatcher.Invoke(() => bar!.UpdateCount(count, false, "image"));
             }
 
             prevTickHash = hash;
         }
 
+        // Scroll stopped (bottom reached or user pressed button during scroll).
+        // If user hasn't chosen yet, keep bar open and wait.
+        if (!barTcs.Task.IsCompleted && !ct.IsCancellationRequested)
+        {
+            try { await barTcs.Task.WaitAsync(ct); }
+            catch (OperationCanceledException) { /* treat as cancel */ }
+        }
+
         Application.Current.Dispatcher.Invoke(() => { bar!.Close(); indicator?.Close(); preview?.Close(); });
 
-        // Save captured frames to %TEMP%\TransIt\<timestamp>\ for review.
+        bool finalize = barTcs.Task.IsCompleted && await barTcs.Task;
+        if (lastStitched.Length == 0) return;
+
+        // Slice stitched image and save everything to %TEMP%\TransIt\<timestamp>\ for review.
+        var slices = SliceVertically(lastStitched);
         var debugDir = Path.Combine(Path.GetTempPath(), "TransIt",
             DateTime.Now.ToString("yyyyMMdd_HHmmss"));
         Directory.CreateDirectory(debugDir);
-        for (int i = 0; i < capturedFrames.Count; i++)
-            File.WriteAllBytes(Path.Combine(debugDir, $"frame_{i + 1:D3}.jpg"), capturedFrames[i]);
+        File.WriteAllBytes(Path.Combine(debugDir, "stitched.jpg"), lastStitched);
+        for (int i = 0; i < slices.Count; i++)
+            File.WriteAllBytes(Path.Combine(debugDir, $"slice_{i + 1:D2}.jpg"), slices[i]);
         System.Diagnostics.Process.Start("explorer.exe", debugDir);
-
-        bool finalize = barTcs.Task.IsCompleted && await barTcs.Task;
-        if (capturedFrames.Count == 0) return;
-
-        // Phase 4: stitch all frames into one tall image.
-        var stitched = await Task.Run(() => ImageStitcher.StitchVertically(capturedFrames), ct);
-        File.WriteAllBytes(Path.Combine(debugDir, "stitched.jpg"), stitched);
 
         if (!finalize) return;
 
-        TextPaneWindow? pane = null;
+        ChatWindow? chat = null;
         Application.Current.Dispatcher.Invoke(() =>
         {
-            pane = new TextPaneWindow();
-            _activePane = pane;
-            pane.Closed += (_, _) => { if (_activePane == pane) _activePane = null; };
-            pane.ShowLoading();
+            chat = new ChatWindow();
+            _activeChat = chat;
+            chat.Closed += (_, _) => { if (_activeChat == chat) _activeChat = null; };
+            chat.ShowLoading();
         });
+
+        AssistantsChatService? service = null;
         try
         {
-            var summary = await _translator.SummarizeImagesAsync([stitched], _settings.SourceLanguage, ct);
-            Application.Current.Dispatcher.Invoke(() => pane!.ShowTranslation([summary]));
+            service = new AssistantsChatService(_settings.OpenAiApiKey, _settings.OpenAiModel);
+            var summary = await service.StartImageSessionAsync(slices, _settings.SourceLanguage, ct);
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (_activeChat == chat) chat!.AddSummary(summary, service);
+                else _ = service.DisposeAsync().AsTask();
+            });
         }
         catch
         {
+            if (service is not null) await service.DisposeAsync();
             Application.Current.Dispatcher.Invoke(() =>
             {
-                if (_activePane == pane) { pane?.Close(); _activePane = null; }
+                if (_activeChat == chat) { chat?.Close(); _activeChat = null; }
             });
             throw;
         }
@@ -278,8 +316,8 @@ public class SummaryMode : ITranslationMode
         return n;
     }
 
-    // Encodes bitmap as JPEG (quality 75) resized to max 800px wide to limit Vision API token cost.
-    private static byte[] BitmapToJpeg(Bitmap bmp, int maxWidth = 800)
+    // Encodes bitmap as JPEG (quality 90) resized to max 1600px wide for readable text in Vision API.
+    private static byte[] BitmapToJpeg(Bitmap bmp, int maxWidth = 1600)
     {
         Bitmap? resized = null;
         try
@@ -294,7 +332,7 @@ public class SummaryMode : ITranslationMode
             if (encoder != null)
             {
                 var ep = new EncoderParameters(1);
-                ep.Param[0] = new EncoderParameter(Encoder.Quality, 75L);
+                ep.Param[0] = new EncoderParameter(Encoder.Quality, 90L);
                 target.Save(ms, encoder, ep);
             }
             else
@@ -309,12 +347,34 @@ public class SummaryMode : ITranslationMode
         }
     }
 
+    // Slices a stitched JPEG vertically into chunks of sliceHeight px with overlapRatio overlap.
+    // Overlap ensures text spanning a slice boundary is readable in at least one slice.
+    private static List<byte[]> SliceVertically(byte[] jpeg, int sliceHeight = 1500, double overlapRatio = 0.20)
+    {
+        using var ms = new MemoryStream(jpeg);
+        using var src = new Bitmap(ms);
+
+        int w    = src.Width;
+        int h    = src.Height;
+        int step = (int)(sliceHeight * (1.0 - overlapRatio)); // advance per slice
+
+        var slices = new List<byte[]>();
+        for (int y = 0; y < h; y += step)
+        {
+            int sh = Math.Min(sliceHeight, h - y);
+            if (sh < 50) break; // skip meaningless trailing sliver
+            using var slice = src.Clone(new System.Drawing.Rectangle(0, y, w, sh), src.PixelFormat);
+            slices.Add(BitmapToJpeg(slice));
+        }
+        return slices;
+    }
+
     public void Deactivate()
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            _activePane?.Close();
-            _activePane = null;
+            _activeChat?.Close();
+            _activeChat = null;
         });
     }
 }

@@ -6,8 +6,17 @@
         Background="Transparent"
         Topmost="True"
         ResizeMode="NoResize"
-        Width="380" Height="72"
+        Width="520" Height="72"
         ShowInTaskbar="False">
+    <Window.Resources>
+        <ControlTemplate x:Key="RoundedBtn" TargetType="Button">
+            <Border Background="{TemplateBinding Background}" CornerRadius="4"
+                    Padding="{TemplateBinding Padding}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+        </ControlTemplate>
+    </Window.Resources>
+
     <Border Background="#CC1E1E1E" CornerRadius="8" BorderBrush="#555" BorderThickness="1">
         <Grid Margin="12,8">
             <Grid.RowDefinitions>
@@ -18,17 +27,67 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <TextBlock x:Name="StatusLabel"
                        Grid.Row="0" Grid.Column="0"
-                       Text="Scroll the content to capture text..."
+                       Text="Press Step or Auto to start..."
                        Foreground="#DDD" FontSize="12" VerticalAlignment="Center"/>
 
-            <Button x:Name="SummarizeButton"
+            <!-- Manual single-step scroll -->
+            <Button x:Name="StepButton"
                     Grid.Row="0" Grid.Column="1"
-                    Content="Summarize" IsEnabled="False"
+                    Content="⬇ Step"
+                    Template="{StaticResource RoundedBtn}"
+                    Background="#1565C0" Foreground="White"
+                    BorderThickness="0" FontSize="12"
                     Margin="8,0,4,0" Padding="10,4"
+                    Cursor="Hand" Click="OnStep">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#0D47A1"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="#333"/>
+                                <Setter Property="Foreground" Value="#666"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <!-- Start continuous auto-scroll -->
+            <Button x:Name="AutoButton"
+                    Grid.Row="0" Grid.Column="2"
+                    Content="▶ Auto"
+                    Template="{StaticResource RoundedBtn}"
+                    Background="#2E7D32" Foreground="White"
+                    BorderThickness="0" FontSize="12"
+                    Margin="0,0,4,0" Padding="10,4"
+                    Cursor="Hand" Click="OnAutoScroll">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#1B5E20"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="#333"/>
+                                <Setter Property="Foreground" Value="#666"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <Button x:Name="SummarizeButton"
+                    Grid.Row="0" Grid.Column="3"
+                    Content="Summarize" IsEnabled="False"
+                    Margin="0,0,4,0" Padding="10,4"
                     Background="#2962FF" Foreground="White"
                     BorderThickness="0" FontSize="12"
                     Cursor="Hand" Click="OnSummarize">
@@ -58,37 +117,28 @@
             </Button>
 
             <Button x:Name="CancelButton"
-                    Grid.Row="0" Grid.Column="2"
+                    Grid.Row="0" Grid.Column="4"
                     Content="Cancel"
-                    Padding="10,4"
+                    Template="{StaticResource RoundedBtn}"
                     Background="#444" Foreground="#CCC"
                     BorderThickness="0" FontSize="12"
+                    Padding="10,4"
                     Cursor="Hand" Click="OnCancel">
                 <Button.Style>
                     <Style TargetType="Button">
-                        <Setter Property="Template">
-                            <Setter.Value>
-                                <ControlTemplate TargetType="Button">
-                                    <Border Background="{TemplateBinding Background}"
-                                            CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="#555"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Setter.Value>
-                        </Setter>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#555"/>
+                            </Trigger>
+                        </Style.Triggers>
                     </Style>
                 </Button.Style>
             </Button>
 
-            <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
+            <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5"
                         Orientation="Horizontal" Margin="0,4,0,0">
                 <TextBlock x:Name="CountLabel"
-                           Text="0 lines captured"
+                           Text="0 images captured"
                            Foreground="#999" FontSize="11"/>
                 <TextBlock x:Name="GapWarning"
                            Text="  ⚠ Scroll slower — gap detected"

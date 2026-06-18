@@ -24,6 +24,7 @@ internal static class NativeMethods
     public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int WS_EX_LAYERED     = 0x00080000;
     public const int WS_EX_TOOLWINDOW  = 0x00000080;
+    public const int WS_EX_NOACTIVATE  = 0x08000000;
 
     // ── WinEvent constants ────────────────────────────────────────────────────
     public const uint EVENT_SYSTEM_FOREGROUND   = 0x0003;
@@ -166,8 +167,11 @@ internal static class NativeMethods
 
     // ── Auto-scroll ───────────────────────────────────────────────────────────
     public const int INPUT_MOUSE = 0;
-    public const uint MOUSEEVENTF_WHEEL = 0x0800;
-    public const int WHEEL_DELTA = 120;
+    public const uint MOUSEEVENTF_MOVE     = 0x0001;
+    public const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+    public const uint MOUSEEVENTF_WHEEL    = 0x0800;
+    public const int WM_MOUSEWHEEL = 0x020A;
+    public const int WHEEL_DELTA   = 120;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct MOUSEINPUT
@@ -191,6 +195,9 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
     // ── Screen capture exclusion ──────────────────────────────────────────────
     // Hides a window from all screen capture APIs (GDI BitBlt, DXGI) while

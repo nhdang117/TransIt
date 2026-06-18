@@ -9,18 +9,19 @@ public partial class CaptureRegionIndicator : Window
     public CaptureRegionIndicator()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
+        SourceInitialized += OnSourceInitialized;
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
-        // Exclude from GDI/DWM screen capture so frames don't include the border overlay.
         NativeMethods.SetWindowDisplayAffinity(hwnd, NativeMethods.WDA_EXCLUDEFROMCAPTURE);
-        // Also make click-through so user can scroll the content underneath.
+        // WS_EX_TRANSPARENT: click/wheel pass through to target app beneath.
+        // WS_EX_NOACTIVATE: don't steal focus from target when shown.
+        // Both set before Show() via SourceInitialized.
         var ex = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
         NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE,
-            ex | NativeMethods.WS_EX_TRANSPARENT);
+            ex | NativeMethods.WS_EX_TRANSPARENT | NativeMethods.WS_EX_NOACTIVATE);
     }
 
     public void ShowForRect(System.Drawing.Rectangle physRect, double dpiScale)

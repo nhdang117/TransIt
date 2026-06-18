@@ -34,7 +34,7 @@ public partial class App : Application
         _overlay    = new OverlayWindow();
 
         _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
-        _summaryMode  = new SummaryMode(_ocr, _translator, _settings);
+        _summaryMode  = new SummaryMode(_ocr, _settings);
         _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
 
         _overlay.AddRegionRequested += (_, _) => RunAddRegion();
@@ -139,7 +139,7 @@ public partial class App : Application
         // Recreate translator with updated settings
         _translator   = new TranslationService(_settings);
         _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
-        _summaryMode  = new SummaryMode(_ocr, _translator, _settings);
+        _summaryMode  = new SummaryMode(_ocr, _settings);
         _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
     }
 
