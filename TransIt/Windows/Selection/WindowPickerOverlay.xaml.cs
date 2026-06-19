@@ -11,6 +11,7 @@ public partial class WindowPickerOverlay : Window
     public System.Drawing.Rectangle? SelectedPhysRect { get; private set; }
     public double SelectedDpiScale { get; private set; } = 1.0;
     public bool Cancelled { get; private set; }
+    public bool IsLayoutRegion { get; private set; }
 
     private IntPtr _myHwnd;
     private IntPtr _lastHwnd;
@@ -20,6 +21,10 @@ public partial class WindowPickerOverlay : Window
     private bool _isDragging;
     private Point _dragStartWpf;
     private const double DragThreshold = 5;
+
+    private readonly List<Rect> _layoutRectsCanvas = [];
+    private double _layoutDpiScale = 1.0;
+    private int _hoveredLayoutIdx = -1;
 
     public WindowPickerOverlay()
     {
@@ -38,6 +43,13 @@ public partial class WindowPickerOverlay : Window
 
         Canvas.SetLeft(HintBorder, (Width - 420) / 2);
         Canvas.SetTop(HintBorder,  Height - 52);
+    }
+
+    public void AddLayoutRects(IReadOnlyList<Rect> absoluteLogical, double dpiScale)
+    {
+        _layoutDpiScale = dpiScale;
+        foreach (var r in absoluteLogical)
+            _layoutRectsCanvas.Add(new Rect(r.X - Left, r.Y - Top, r.Width, r.Height));
     }
 
     private void OnMouseMove(object sender, MouseEventArgs e)
@@ -64,6 +76,29 @@ public partial class WindowPickerOverlay : Window
             }
             return;
         }
+
+        var canvasPos = e.GetPosition(this);
+
+        // Check layout rects first
+        _hoveredLayoutIdx = -1;
+        for (int i = 0; i < _layoutRectsCanvas.Count; i++)
+        {
+            if (_layoutRectsCanvas[i].Contains(canvasPos)) { _hoveredLayoutIdx = i; break; }
+        }
+
+        if (_hoveredLayoutIdx >= 0)
+        {
+            var r = _layoutRectsCanvas[_hoveredLayoutIdx];
+            Canvas.SetLeft(LayoutHighlightRect, r.X);
+            Canvas.SetTop(LayoutHighlightRect,  r.Y);
+            LayoutHighlightRect.Width  = r.Width;
+            LayoutHighlightRect.Height = r.Height;
+            LayoutHighlightRect.Visibility = Visibility.Visible;
+            HighlightRect.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        LayoutHighlightRect.Visibility = Visibility.Collapsed;
 
         // Hover mode: detect window under cursor
         NativeMethods.GetCursorPos(out var pt);
@@ -140,6 +175,17 @@ public partial class WindowPickerOverlay : Window
             SelectedPhysRect = new System.Drawing.Rectangle(
                 (int)physL, (int)physT, (int)physW, (int)physH);
             SelectedDpiScale = _currentDpiScale;
+        }
+        else if (_hoveredLayoutIdx >= 0)
+        {
+            var canvas = _layoutRectsCanvas[_hoveredLayoutIdx];
+            double absLogX = canvas.X + Left;
+            double absLogY = canvas.Y + Top;
+            SelectedPhysRect = new System.Drawing.Rectangle(
+                (int)(absLogX * _layoutDpiScale), (int)(absLogY * _layoutDpiScale),
+                (int)(canvas.Width * _layoutDpiScale), (int)(canvas.Height * _layoutDpiScale));
+            SelectedDpiScale = _layoutDpiScale;
+            IsLayoutRegion = true;
         }
         else
         {

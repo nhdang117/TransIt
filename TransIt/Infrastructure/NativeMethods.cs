@@ -165,6 +165,18 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT lpPoint);
 
+    // ── Window enumeration ────────────────────────────────────────────────────
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(IntPtr hWnd);
+
     // ── Auto-scroll ───────────────────────────────────────────────────────────
     public const int INPUT_MOUSE = 0;
     public const uint MOUSEEVENTF_MOVE     = 0x0001;

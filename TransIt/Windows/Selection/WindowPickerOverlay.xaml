@@ -28,6 +28,13 @@
                    Visibility="Collapsed"
                    IsHitTestVisible="False"/>
 
+        <!-- Hover highlight for detected layout regions -->
+        <Rectangle x:Name="LayoutHighlightRect"
+                   Fill="#2200C853"
+                   Stroke="#00C853" StrokeThickness="2"
+                   Visibility="Collapsed"
+                   IsHitTestVisible="False"/>
+
         <!-- Instruction label — bottom-center -->
         <Border x:Name="HintBorder"
                 Canvas.Bottom="0"
@@ -35,7 +42,7 @@
                 CornerRadius="6"
                 Padding="14,6"
                 IsHitTestVisible="False">
-            <TextBlock Text="Hover over the email window and click to select"
+            <TextBlock Text="Hover a layout region or window panel, click to select"
                        Foreground="White" FontSize="13"/>
         </Border>
 

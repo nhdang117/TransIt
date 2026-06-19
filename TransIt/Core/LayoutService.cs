@@ -22,25 +22,48 @@ public class LayoutService : IDisposable
     private Process? _worker;
     private bool _disposed;
 
+    // Starts the worker process and runs a throwaway inference so MKL-DNN graph optimization
+    // (fixed 800x608 picodet input) is paid at app startup rather than on the first real request.
+    public async Task WarmUpAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var tiny = new Bitmap(32, 32);
+            await DetectAsync(tiny, cts.Token);
+            Debug.WriteLine("[LAYOUT] warmup done");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[LAYOUT] warmup failed: {ex.Message}");
+        }
+    }
+
     public async Task<List<LayoutRegion>> DetectAsync(Bitmap bitmap, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
+        var swTotal = Stopwatch.StartNew();
+
+        var sw = Stopwatch.StartNew();
         byte[] pngBytes;
         using (var ms = new MemoryStream())
         {
             bitmap.Save(ms, ImageFormat.Png);
             pngBytes = ms.ToArray();
         }
+        Debug.WriteLine($"[LAYOUT] png_encode  = {sw.ElapsedMilliseconds} ms  ({pngBytes.Length / 1024} KB)");
 
         await _lock.WaitAsync(ct);
         try
         {
             Process worker = GetOrStartWorker();
 
+            sw.Restart();
             await WriteFrameAsync(worker.StandardInput.BaseStream, pngBytes, ct);
             byte[] responseBytes = await ReadFrameAsync(worker.StandardOutput.BaseStream, ct)
                 ?? throw new IOException("Layout worker closed its output stream unexpectedly.");
+            Debug.WriteLine($"[LAYOUT] worker_rtt  = {sw.ElapsedMilliseconds} ms  ({responseBytes.Length} bytes)");
 
             var response = JsonSerializer.Deserialize<WorkerResponse>(responseBytes)
                 ?? throw new IOException("Layout worker returned an empty response.");
@@ -48,7 +71,7 @@ public class LayoutService : IDisposable
             if (!response.ok)
                 throw new IOException($"Layout worker error: {response.error}");
 
-            return (response.regions ?? [])
+            var result = (response.regions ?? [])
                 .Select(r => new LayoutRegion
                 {
                     Category = Enum.Parse<LayoutCategory>(r.category),
@@ -56,6 +79,9 @@ public class LayoutService : IDisposable
                     Confidence = r.confidence,
                 })
                 .ToList();
+
+            Debug.WriteLine($"[LAYOUT] total       = {swTotal.ElapsedMilliseconds} ms  ({result.Count} regions)");
+            return result;
         }
         catch
         {

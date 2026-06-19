@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using PaddleOCRSharp;
 using AppOcrLine = TransIt.Models.OcrLine;
@@ -9,6 +10,7 @@ public class OcrService : IDisposable
 {
     private readonly SemaphoreSlim _engineLock = new(1, 1);
     private PaddleOCREngine? _engine;
+    private int _callCount;
     private bool _disposed;
 
     // languageTag kept for call-site compatibility; OCRModelConfig.V5_CN is a combined
@@ -18,20 +20,54 @@ public class OcrService : IDisposable
     {
         ct.ThrowIfCancellationRequested();
 
+        var sw = Stopwatch.StartNew();
+
         var engine = await GetEngineAsync(ct);
         ct.ThrowIfCancellationRequested();
 
-        OCRResult result = await Task.Run(() => engine.DetectText(bitmap), ct);
+        int call = Interlocked.Increment(ref _callCount);
+        sw.Restart();
+        double coordScale = 1.0;
+        OCRResult result;
+        try
+        {
+            result = await Task.Run(() => engine.DetectText(bitmap), ct);
+        }
+        catch (Exception ex) when (ex.Message.Contains("box sizes"))
+        {
+            Debug.WriteLine($"[OCR] box limit hit, retrying at 50% scale");
+            using var scaled = new Bitmap(bitmap, bitmap.Width / 2, bitmap.Height / 2);
+            result = await Task.Run(() => engine.DetectText(scaled), ct);
+            coordScale = 2.0;
+        }
+        Debug.WriteLine($"[OCR] detect_text  = {sw.ElapsedMilliseconds} ms  call=#{call} ({bitmap.Width}x{bitmap.Height} px, {result.TextBlocks?.Count ?? 0} blocks)");
 
+        sw.Restart();
         var rawBlocks = result.TextBlocks
             .Where(b => !string.IsNullOrWhiteSpace(b.Text))
-            .Select(b => (Text: b.Text, Rect: BoundingRectOf(b.BoxPoints)))
+            .Select(b => (Text: b.Text, Rect: ScaleRect(BoundingRectOf(b.BoxPoints), coordScale)))
             .ToList();
 
-        return GroupIntoLines(rawBlocks);
+        var lines = GroupIntoLines(rawBlocks);
+        Debug.WriteLine($"[OCR] group_lines  = {sw.ElapsedMilliseconds} ms  ({rawBlocks.Count} blocks → {lines.Count} lines)");
+
+        return lines;
     }
 
     public static IReadOnlyList<string> GetInstalledLanguageTags() => ["en", "zh"];
+
+    public async Task WarmUpAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await GetEngineAsync(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[OCR] warmup failed: {ex.Message}");
+        }
+    }
 
     private async Task<PaddleOCREngine> GetEngineAsync(CancellationToken ct)
     {
@@ -40,11 +76,29 @@ public class OcrService : IDisposable
         await _engineLock.WaitAsync(ct);
         try
         {
-            _engine ??= new PaddleOCREngine(OCRModelConfig.V5_CN, new OCRParameter
+            if (_engine == null)
             {
-                cls = false,
-                use_angle_cls = false,
-            });
+                var sw = Stopwatch.StartNew();
+                var engine = new PaddleOCREngine(OCRModelConfig.V6_Tiny, new OCRParameter
+                {
+                    cls = false,
+                    use_angle_cls = false,
+                    rec_batch_num = 24,
+                });
+                Debug.WriteLine($"[OCR] engine_new   = {sw.ElapsedMilliseconds} ms  model=V6_Tiny");
+
+                // Warmup with a 960x640 bitmap so MKL-DNN caches the graph for the same
+                // padded shape (~960x640) that typical screen crops produce after max_side_len scaling.
+                sw.Restart();
+                await Task.Run(() =>
+                {
+                    using var warmup = new Bitmap(960, 640);
+                    engine.DetectText(warmup);
+                }, ct);
+                Debug.WriteLine($"[OCR] warmup       = {sw.ElapsedMilliseconds} ms");
+
+                _engine = engine;
+            }
             return _engine;
         }
         finally
@@ -52,6 +106,9 @@ public class OcrService : IDisposable
             _engineLock.Release();
         }
     }
+
+    private static System.Windows.Rect ScaleRect(System.Windows.Rect r, double f) =>
+        f == 1.0 ? r : new System.Windows.Rect(r.X * f, r.Y * f, r.Width * f, r.Height * f);
 
     private static System.Windows.Rect BoundingRectOf(IList<OCRPoint> points)
     {

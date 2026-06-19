@@ -38,24 +38,88 @@ public class RegionMode : ITranslationMode
     {
         Application.Current.Dispatcher.Invoke(() => _overlay.Hide());
 
-        var tcs = new TaskCompletionSource<bool>();
-        WindowPickerOverlay picker = null!;
-        Application.Current.Dispatcher.Invoke(() =>
+        var (monBitmap, captureDpi, captureMonRect) = ScreenCaptureService.CaptureMonitorAtCursor();
+        try
         {
-            picker = new WindowPickerOverlay();
-            picker.Closed += (_, _) => tcs.TrySetResult(true);
-            picker.Show();
-        });
-        await tcs.Task;
+            var tcs = new TaskCompletionSource<bool>();
+            WindowPickerOverlay picker = null!;
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                picker = new WindowPickerOverlay();
+                picker.Closed += (_, _) => tcs.TrySetResult(true);
+                picker.Show();
+            });
 
-        if (picker.Cancelled || picker.SelectedPhysRect is null) return;
-        ct.ThrowIfCancellationRequested();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (_layout == null) return;
 
-        var physRect = picker.SelectedPhysRect.Value;
-        if (_settings.RegionOverlayMode)
-            await RunOverlayMode(physRect, ct);
-        else
-            await RunTextPaneMode(physRect, ct);
+                    var windows = EnumerateWindowsOnMonitor(captureMonRect);
+                    double monLogX = captureMonRect.Left / captureDpi;
+                    double monLogY = captureMonRect.Top  / captureDpi;
+                    var fineLogical = new List<System.Windows.Rect>();
+                    int sentCount = 0;
+
+                    foreach (var winPhysRect in windows)
+                    {
+                        if (tcs.Task.IsCompleted) return;
+
+                        var clipped = System.Drawing.Rectangle.Intersect(winPhysRect, captureMonRect);
+                        int bx = clipped.X - captureMonRect.Left;
+                        int by = clipped.Y - captureMonRect.Top;
+                        int bw = Math.Min(clipped.Width,  monBitmap.Width  - bx);
+                        int bh = Math.Min(clipped.Height, monBitmap.Height - by);
+                        if (bw <= 0 || bh <= 0) continue;
+
+                        using var crop = monBitmap.Clone(
+                            new System.Drawing.Rectangle(bx, by, bw, bh), monBitmap.PixelFormat);
+
+                        List<LayoutRegion> regions;
+                        try { regions = await _layout.DetectAsync(crop, ct); }
+                        catch { continue; }
+
+                        foreach (var sub in regions)
+                        {
+                            if (sub.Category == LayoutCategory.Figure) continue;
+                            if (sub.Confidence < 0.7f) continue;
+                            fineLogical.Add(new System.Windows.Rect(
+                                (sub.BoundingRect.X + bx) / captureDpi + monLogX,
+                                (sub.BoundingRect.Y + by) / captureDpi + monLogY,
+                                sub.BoundingRect.Width  / captureDpi,
+                                sub.BoundingRect.Height / captureDpi));
+                        }
+
+                        if (fineLogical.Count > sentCount)
+                        {
+                            var newRects = fineLogical.Skip(sentCount).ToList();
+                            sentCount = fineLogical.Count;
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                if (!tcs.Task.IsCompleted)
+                                    picker.AddLayoutRects(newRects, captureDpi);
+                            });
+                        }
+                    }
+                }
+                catch { }
+            }, ct);
+
+            await tcs.Task;
+            if (picker.Cancelled || picker.SelectedPhysRect is null) return;
+            ct.ThrowIfCancellationRequested();
+
+            var physRect = picker.SelectedPhysRect.Value;
+            if (_settings.RegionOverlayMode)
+                await RunOverlayMode(physRect, ct);
+            else
+                await RunTextPaneMode(physRect, ct);
+        }
+        finally
+        {
+            monBitmap.Dispose();
+        }
     }
 
     private async Task RunOverlayMode(System.Drawing.Rectangle physRect, CancellationToken ct)
@@ -246,6 +310,24 @@ public class RegionMode : ITranslationMode
         }
 
         Application.Current.Dispatcher.Invoke(() => _overlay.AddTranslationItems(items));
+    }
+
+    private static List<System.Drawing.Rectangle> EnumerateWindowsOnMonitor(System.Drawing.Rectangle monRect)
+    {
+        var results = new List<System.Drawing.Rectangle>();
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            if (!NativeMethods.IsWindowVisible(hwnd)) return true;
+            if (NativeMethods.IsIconic(hwnd)) return true;
+            int exStyle = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
+            if ((exStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0) return true;
+            NativeMethods.GetWindowRect(hwnd, out var r);
+            var intersection = System.Drawing.Rectangle.Intersect(r.ToRectangle(), monRect);
+            if (intersection.Width < 50 || intersection.Height < 50) return true;
+            results.Add(r.ToRectangle());
+            return true;
+        }, IntPtr.Zero);
+        return results;
     }
 
     public void Deactivate()

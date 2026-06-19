@@ -31,6 +31,11 @@ public partial class App : Application
         _ocr        = new OcrService();
         _layout     = new LayoutService();
         _translator = new TranslationService(_settings);
+
+        // Pre-warm both engines in background — pays MKL-DNN graph-optimization
+        // cost before the first user hotkey, not during it.
+        _ = _ocr.WarmUpAsync();
+        _ = _layout.WarmUpAsync();
         _overlay    = new OverlayWindow();
 
         _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
