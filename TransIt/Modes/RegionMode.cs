@@ -156,11 +156,16 @@ public class RegionMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
+            Application.Current.Dispatcher.Invoke(() => _overlay.UpdateLoadingStatus("Detect layout / Line grouping…"));
             var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct, bx, by);
+
+            Application.Current.Dispatcher.Invoke(() => _overlay.UpdateLoadingStatus("Waiting for AI to translate…"));
             var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var translatedById = await _translator.TranslateBlocksAsync(translatable,
                 _settings.SourceLanguage, _settings.TargetLanguage, ct);
+
+            Application.Current.Dispatcher.Invoke(() => _overlay.UpdateLoadingStatus("Writing overlay…"));
 
             double monLogX = monRect.Left / dpiScale;
             double monLogY = monRect.Top  / dpiScale;
@@ -226,7 +231,10 @@ public class RegionMode : ITranslationMode
                 return;
             }
 
+            Application.Current.Dispatcher.Invoke(() => pane!.UpdateLoadingStatus("Detect layout / Line grouping…"));
             var blocks = await LayoutGrouping.GroupLinesAsync(lines, _layout, regionBitmap, ct);
+
+            Application.Current.Dispatcher.Invoke(() => pane!.UpdateLoadingStatus("Waiting for AI to translate…"));
             var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var translatedById = await _translator.TranslateBlocksAsync(translatable,

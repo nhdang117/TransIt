@@ -144,7 +144,7 @@ public class OcrBlock
         double avgHeight = sorted.Average(l => l.BoundingRect.Height);
 
         double mergeThreshold = getGroupMergeThreshold(lines);
-        Console.WriteLine($"Grouping {n} lines in region: avg height = {avgHeight:F1}, merge threshold = {mergeThreshold:F1}");
+        //Console.WriteLine($"Grouping {n} lines in region: avg height = {avgHeight:F1}, merge threshold = {mergeThreshold:F1}");
         var parent = Enumerable.Range(0, n).ToArray();
         int Find(int x) => parent[x] == x ? x : parent[x] = Find(parent[x]);
         void Union(int a, int b) { a = Find(a); b = Find(b); if (a != b) parent[a] = b; }
@@ -154,8 +154,8 @@ public class OcrBlock
         for (int i = 0; i < n - 1; i++)
         {
             double gap = sorted[i + 1].BoundingRect.Y - (sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height);
-            Console.WriteLine($"Region line {i} Bottom Y = {sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height}, line {i + 1} top Y = {sorted[i + 1].BoundingRect.Y:F1}");
-            Console.WriteLine($"  → Gap between lines {i} and {i + 1}: {gap:F1}");
+            //Console.WriteLine($"Region line {i} Bottom Y = {sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height}, line {i + 1} top Y = {sorted[i + 1].BoundingRect.Y:F1}");
+            //Console.WriteLine($"  → Gap between lines {i} and {i + 1}: {gap:F1}");
             if (gap <= mergeThreshold)
                 Union(i, i + 1);
         }

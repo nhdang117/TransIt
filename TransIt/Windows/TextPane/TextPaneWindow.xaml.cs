@@ -19,6 +19,7 @@ public partial class TextPaneWindow : Window
 
     public void ShowLoading()
     {
+        LoadingText.Text = "Text OCR…";
         LoadingPanel.Visibility = Visibility.Visible;
         ResultsPanel.Visibility = Visibility.Collapsed;
         ResultsPanel.Children.Clear();
@@ -26,6 +27,8 @@ public partial class TextPaneWindow : Window
         Activate();
         InstallEscHook();
     }
+
+    public void UpdateLoadingStatus(string text) => LoadingText.Text = text;
 
     public void ShowTranslation(IList<string> blocks)
     {

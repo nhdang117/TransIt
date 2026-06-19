@@ -99,6 +99,8 @@ public partial class OverlayWindow : Window
         InstallEscHook();
     }
 
+    public void UpdateLoadingStatus(string text) => Canvas.UpdateLoadingStatus(text);
+
     public void UpdateWithTranslation(IList<OverlayTextItem> items)
     {
         _currentItems = [..items];

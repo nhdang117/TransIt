@@ -132,9 +132,11 @@ public partial class OverlayCanvas : UserControl
     public void ShowLoading(bool show)
     {
         LoadingLayer.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (show) StartSpinner();
+        if (show) { StatusText.Text = "Text OCR…"; StartSpinner(); }
         else StopSpinner();
     }
+
+    public void UpdateLoadingStatus(string text) => StatusText.Text = text;
 
     private void StartSpinner()
     {
