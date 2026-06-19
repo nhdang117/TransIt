@@ -12,23 +12,23 @@ using TransIt.Windows.TextPane;
 
 namespace TransIt.Modes;
 
-/// Ctrl+1 test mode: same region-select flow as RegionMode, but draws raw PaddleOCR
-/// line boxes and OcrBlock.GroupLines paragraph boxes instead of translating, then shows
-/// the exact payload (TranslatableBlock list) that would be sent to the OpenAI API.
+/// Ctrl+1 debug mode: pre-captures monitor, shows LayoutPickerOverlay with YOLO region
+/// highlights, then draws raw OCR line boxes / OcrBlock paragraph boxes / YOLO layout
+/// regions and dumps the TranslatableBlock payload that would be sent to the API.
 public class OcrDebugMode : ITranslationMode
 {
     private static readonly JsonSerializerOptions _jsonOpts = new() { WriteIndented = true };
 
     private readonly OcrService _ocr;
-    private readonly LayoutService _layout;
+    private readonly YoloLayoutService _yolo;
     private readonly AppSettings _settings;
     private readonly OverlayWindow _overlay;
     private TextPaneWindow? _activePane;
 
-    public OcrDebugMode(OcrService ocr, LayoutService layout, AppSettings settings, OverlayWindow overlay)
+    public OcrDebugMode(OcrService ocr, YoloLayoutService yolo, AppSettings settings, OverlayWindow overlay)
     {
         _ocr = ocr;
-        _layout = layout;
+        _yolo = yolo;
         _settings = settings;
         _overlay = overlay;
     }
@@ -41,26 +41,37 @@ public class OcrDebugMode : ITranslationMode
             if (_activePane != null) { _activePane.Close(); _activePane = null; }
         });
 
+        // Pre-capture before any overlay appears.
+        var (monRect, dpiScale) = DpiHelper.GetMonitorAtCursor();
+        Bitmap fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
+
+        // Start YOLO immediately — runs in parallel with ToBitmapSource + window init.
+        // Clone so YOLO's background thread and ToBitmapSource (UI thread) don't share the same GDI+ bitmap.
+        var layoutCts  = new CancellationTokenSource();
+        var layoutTask = _yolo.DetectOwnedAsync((Bitmap)fullBitmap.Clone(), layoutCts.Token);
+
+        BitmapSource bitmapSource = null!;
+        Application.Current.Dispatcher.Invoke(() => bitmapSource = ToBitmapSource(fullBitmap));
+
         var tcs = new TaskCompletionSource<bool>();
-        WindowPickerOverlay picker = null!;
+        LayoutPickerOverlay picker = null!;
         Application.Current.Dispatcher.Invoke(() =>
         {
-            picker = new WindowPickerOverlay();
+            picker = new LayoutPickerOverlay(bitmapSource, fullBitmap, monRect, dpiScale, layoutTask, layoutCts);
             picker.Closed += (_, _) => tcs.TrySetResult(true);
             picker.Show();
         });
         await tcs.Task;
 
-        if (picker.Cancelled || picker.SelectedPhysRect is null) return;
+        if (picker.Cancelled || picker.SelectedPhysRect is null)
+        {
+            fullBitmap.Dispose();
+            return;
+        }
         ct.ThrowIfCancellationRequested();
 
         var physRect = picker.SelectedPhysRect.Value;
-        var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
-            physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
-        using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
-        var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(fullBitmap));
-
-        Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
+        Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(bitmapSource));
 
         try
         {
@@ -74,7 +85,7 @@ public class OcrDebugMode : ITranslationMode
             var lines = await _ocr.RecognizeAsync(regionBitmap, _settings.SourceLanguage, ct);
             if (lines.Count == 0)
             {
-                Application.Current.Dispatcher.Invoke(() => _overlay.ShowDebugOverlay([], [], background));
+                Application.Current.Dispatcher.Invoke(() => _overlay.ShowDebugOverlay([], [], bitmapSource));
                 return;
             }
 
@@ -85,19 +96,12 @@ public class OcrDebugMode : ITranslationMode
                     word.BoundingRect = Offset(word.BoundingRect, bx, by);
             }
 
-            // Run layout detection directly (not via LayoutGrouping's silent-fallback
-            // wrapper) so we can see exactly what the detector returned/threw.
+            // Run YOLO on the selected crop for debug output.
             List<LayoutRegion> regions = [];
             string? layoutError = null;
-            if (_layout != null)
-            {
-                try { regions = await _layout.DetectAsync(regionBitmap, ct); }
-                catch (Exception ex) { layoutError = ex.Message; }
-            }
+            try { regions = await _yolo.DetectAsync(regionBitmap, ct); }
+            catch (Exception ex) { layoutError = ex.Message; }
 
-            // DetectAsync returns rects relative to regionBitmap (the crop); lines were just
-            // offset to fullBitmap space above, so regions need the same offset or every
-            // line/region overlap check below compares mismatched origins.
             foreach (var region in regions)
                 region.BoundingRect = Offset(region.BoundingRect, bx, by);
 
@@ -119,14 +123,13 @@ public class OcrDebugMode : ITranslationMode
                 ? OcrBlock.GetMergeZoneRects(lines, regions).Select(ToLogical).ToList()
                 : [];
 
-            // Same shape RegionMode/SnapshotMode/RealtimeMode build right before calling
-            // TranslationService.TranslateBlocksAsync — physical-pixel rect, not logical DIPs.
             var translatable = blocks.Select((b, i) => new TranslationService.TranslatableBlock(
                 i, b.FullText, b.BoundingRect.X, b.BoundingRect.Y, b.BoundingRect.Width, b.BoundingRect.Height)).ToList();
             var payloadJson = JsonSerializer.Serialize(translatable, _jsonOpts);
 
             var diagLines = new List<string>
             {
+                _yolo.LastDebugInfo,
                 $"Layout regions detected: {regions.Count}" + (layoutError != null ? $" (ERROR: {layoutError})" : ""),
             };
             diagLines.AddRange(regions.Select(r =>
@@ -135,7 +138,7 @@ public class OcrDebugMode : ITranslationMode
 
             Application.Current.Dispatcher.Invoke(() =>
             {
-                _overlay.ShowDebugOverlay(lineRects, blockRects, background, regionRects, mergeZoneRects);
+                _overlay.ShowDebugOverlay(lineRects, blockRects, bitmapSource, regionRects, mergeZoneRects);
 
                 var pane = new TextPaneWindow();
                 _activePane = pane;
@@ -148,6 +151,10 @@ public class OcrDebugMode : ITranslationMode
         {
             Application.Current.Dispatcher.Invoke(() => _overlay.HideOverlay());
             throw;
+        }
+        finally
+        {
+            fullBitmap.Dispose();
         }
     }
 

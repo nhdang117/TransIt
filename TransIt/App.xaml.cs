@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using Hardcodet.Wpf.TaskbarNotification;
 using TransIt.Core;
@@ -16,6 +17,8 @@ public partial class App : Application
     private OverlayWindow _overlay = null!;
     private OcrService _ocr = null!;
     private LayoutService _layout = null!;
+    private YoloLayoutService _yolo = null!;
+    private TableTransformerService _tableTransformer = null!;
     private TranslationService _translator = null!;
 
     private RegionMode?   _regionMode;
@@ -33,9 +36,20 @@ public partial class App : Application
         _translator = new TranslationService(_settings);
         _overlay    = new OverlayWindow();
 
-        _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
+        string appDir = AppContext.BaseDirectory;
+        _yolo             = new YoloLayoutService(Path.Combine(appDir, "Assets", "yolov8_dla.onnx"));
+        _tableTransformer = new TableTransformerService(Path.Combine(appDir, "Assets", "table_transformer.onnx"));
+
+        _regionMode   = new RegionMode(_ocr, _yolo, _tableTransformer, _translator, _settings, _overlay);
         _summaryMode  = new SummaryMode(_ocr, _settings);
-        _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
+        _ocrDebugMode = new OcrDebugMode(_ocr, _yolo, _settings, _overlay);
+
+        // Warm up ONNX sessions on background thread so first hotkey press has no JIT delay.
+        Task.Run(() =>
+        {
+            _yolo.Warmup();
+            _tableTransformer.Warmup();
+        });
 
         _overlay.AddRegionRequested += (_, _) => RunAddRegion();
 
@@ -138,9 +152,9 @@ public partial class App : Application
         win.ShowDialog();
         // Recreate translator with updated settings
         _translator   = new TranslationService(_settings);
-        _regionMode   = new RegionMode(_ocr, _layout, _translator, _settings, _overlay);
+        _regionMode   = new RegionMode(_ocr, _yolo, _tableTransformer, _translator, _settings, _overlay);
         _summaryMode  = new SummaryMode(_ocr, _settings);
-        _ocrDebugMode = new OcrDebugMode(_ocr, _layout, _settings, _overlay);
+        _ocrDebugMode = new OcrDebugMode(_ocr, _yolo, _settings, _overlay);
     }
 
     private bool CheckApiKey()
@@ -158,6 +172,8 @@ public partial class App : Application
         _tray.Dispose();
         _ocr.Dispose();
         _layout.Dispose();
+        _yolo.Dispose();
+        _tableTransformer.Dispose();
         _settings.Save();
         base.OnExit(e);
     }

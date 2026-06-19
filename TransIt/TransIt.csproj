@@ -21,6 +21,8 @@
     <PackageReference Include="System.Text.Json" Version="9.0.5" />
     <PackageReference Include="PaddleOCRSharp" Version="6.2.0" />
     <PackageReference Include="Paddle.Runtime.win_x64" Version="3.3.0.1" />
+    <!-- YOLOv8-DLA and Table Transformer inference -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +31,14 @@
 
   <ItemGroup>
     <None Include="Assets\LayoutModel\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- YOLOv8-DLA and Table Transformer ONNX models: drop files here -->
+    <None Include="Assets\*.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- RapidOCR models: Assets/rapidocr/det.onnx, cls.onnx, rec.onnx, keys.txt -->
+    <None Include="Assets\rapidocr\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
