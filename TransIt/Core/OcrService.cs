@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Drawing;
-using PaddleOCRSharp;
+using System.Drawing.Imaging;
+using System.IO;
+using RapidOcrNet;
+using SkiaSharp;
 using AppOcrLine = TransIt.Models.OcrLine;
 using AppOcrWord = TransIt.Models.OcrWord;
 
@@ -9,12 +12,15 @@ namespace TransIt.Core;
 public class OcrService : IDisposable
 {
     private readonly SemaphoreSlim _engineLock = new(1, 1);
-    private PaddleOCREngine? _engine;
+    private RapidOcr? _engine;
     private int _callCount;
     private bool _disposed;
 
-    // languageTag kept for call-site compatibility; OCRModelConfig.V5_CN is a combined
-    // Chinese+English model, so one shared engine covers both bundled source languages.
+    private static readonly RapidOcrOptions _options = RapidOcrOptions.Default with { DoAngle = false };
+
+    private static string ModelPath(string file) =>
+        Path.Combine(AppContext.BaseDirectory, "models", "v5", file);
+
     public async Task<List<AppOcrLine>> RecognizeAsync(Bitmap bitmap, string languageTag,
                                                         CancellationToken ct = default)
     {
@@ -27,25 +33,15 @@ public class OcrService : IDisposable
 
         int call = Interlocked.Increment(ref _callCount);
         sw.Restart();
-        double coordScale = 1.0;
-        OCRResult result;
-        try
-        {
-            result = await Task.Run(() => engine.DetectText(bitmap), ct);
-        }
-        catch (Exception ex) when (ex.Message.Contains("box sizes"))
-        {
-            Debug.WriteLine($"[OCR] box limit hit, retrying at 50% scale");
-            using var scaled = new Bitmap(bitmap, bitmap.Width / 2, bitmap.Height / 2);
-            result = await Task.Run(() => engine.DetectText(scaled), ct);
-            coordScale = 2.0;
-        }
-        Debug.WriteLine($"[OCR] detect_text  = {sw.ElapsedMilliseconds} ms  call=#{call} ({bitmap.Width}x{bitmap.Height} px, {result.TextBlocks?.Count ?? 0} blocks)");
+
+        using var skBitmap = ToSkBitmap(bitmap);
+        var result = await Task.Run(() => engine.Detect(skBitmap, _options), ct);
+        Debug.WriteLine($"[OCR] detect_text  = {sw.ElapsedMilliseconds} ms  call=#{call} ({bitmap.Width}x{bitmap.Height} px, {result.TextBlocks?.Length ?? 0} blocks)");
 
         sw.Restart();
-        var rawBlocks = result.TextBlocks
+        var rawBlocks = (result.TextBlocks ?? [])
             .Where(b => !string.IsNullOrWhiteSpace(b.Text))
-            .Select(b => (Text: b.Text, Rect: ScaleRect(BoundingRectOf(b.BoxPoints), coordScale)))
+            .Select(b => (Text: b.Text, Rect: BoundingRectOf(b.BoxPoints)))
             .ToList();
 
         var lines = GroupIntoLines(rawBlocks);
@@ -69,7 +65,7 @@ public class OcrService : IDisposable
         }
     }
 
-    private async Task<PaddleOCREngine> GetEngineAsync(CancellationToken ct)
+    private async Task<RapidOcr> GetEngineAsync(CancellationToken ct)
     {
         if (_engine != null) return _engine;
 
@@ -79,22 +75,17 @@ public class OcrService : IDisposable
             if (_engine == null)
             {
                 var sw = Stopwatch.StartNew();
-                var engine = new PaddleOCREngine(OCRModelConfig.V6_Tiny, new OCRParameter
-                {
-                    cls = false,
-                    use_angle_cls = false,
-                    rec_batch_num = 24,
-                });
-                Debug.WriteLine($"[OCR] engine_new   = {sw.ElapsedMilliseconds} ms  model=V6_Tiny");
+                var engine = new RapidOcr();
+                engine.InitModels(
+                    detPath:  ModelPath("ch_PP-OCRv5_mobile_det.onnx"),
+                    clsPath:  ModelPath("ch_ppocr_mobile_v2.0_cls_infer.onnx"),
+                    recPath:  ModelPath("ch_PP-OCRv5_rec_mobile.onnx"),
+                    keysPath: ModelPath("ppocrv5_dict.txt"));
+                Debug.WriteLine($"[OCR] engine_new   = {sw.ElapsedMilliseconds} ms  model=RapidOCR-PP-OCRv5-CN");
 
-                // Warmup with a 960x640 bitmap so MKL-DNN caches the graph for the same
-                // padded shape (~960x640) that typical screen crops produce after max_side_len scaling.
                 sw.Restart();
-                await Task.Run(() =>
-                {
-                    using var warmup = new Bitmap(960, 640);
-                    engine.DetectText(warmup);
-                }, ct);
+                using var warmup = new SKBitmap(960, 640);
+                await Task.Run(() => engine.Detect(warmup, _options), ct);
                 Debug.WriteLine($"[OCR] warmup       = {sw.ElapsedMilliseconds} ms");
 
                 _engine = engine;
@@ -107,21 +98,44 @@ public class OcrService : IDisposable
         }
     }
 
-    private static System.Windows.Rect ScaleRect(System.Windows.Rect r, double f) =>
-        f == 1.0 ? r : new System.Windows.Rect(r.X * f, r.Y * f, r.Width * f, r.Height * f);
-
-    private static System.Windows.Rect BoundingRectOf(IList<OCRPoint> points)
+    private static unsafe SKBitmap ToSkBitmap(Bitmap src)
     {
-        double minX = points.Min(p => p.X);
-        double minY = points.Min(p => p.Y);
-        double maxX = points.Max(p => p.X);
-        double maxY = points.Max(p => p.Y);
+        var info = new SKImageInfo(src.Width, src.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        var dst = new SKBitmap(info);
+        var bmpData = src.LockBits(
+            new Rectangle(0, 0, src.Width, src.Height),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* src0 = (byte*)bmpData.Scan0;
+            byte* dst0 = (byte*)dst.GetPixels();
+            int rowBytes = info.RowBytes;
+            int stride   = Math.Abs(bmpData.Stride);
+            for (int y = 0; y < src.Height; y++)
+                Buffer.MemoryCopy(src0 + y * stride, dst0 + y * rowBytes, rowBytes, rowBytes);
+        }
+        finally
+        {
+            src.UnlockBits(bmpData);
+        }
+        return dst;
+    }
+
+    private static System.Windows.Rect BoundingRectOf(SKPointI[] points)
+    {
+        int minX = int.MaxValue, minY = int.MaxValue;
+        int maxX = int.MinValue, maxY = int.MinValue;
+        foreach (var p in points)
+        {
+            if (p.X < minX) minX = p.X;
+            if (p.Y < minY) minY = p.Y;
+            if (p.X > maxX) maxX = p.X;
+            if (p.Y > maxY) maxY = p.Y;
+        }
         return new System.Windows.Rect(minX, minY, Math.Max(0, maxX - minX), Math.Max(0, maxY - minY));
     }
 
-    // PaddleOCR's DetectText returns flat word/phrase-level boxes (not pre-grouped into
-    // lines like Windows.Media.Ocr did), so rows must be clustered here before the
-    // paragraph-level grouping in OcrBlock.GroupLines runs on top.
     private static List<AppOcrLine> GroupIntoLines(List<(string Text, System.Windows.Rect Rect)> rawBlocks)
     {
         if (rawBlocks.Count == 0) return [];
@@ -146,9 +160,6 @@ public class OcrService : IDisposable
         var lines = new List<AppOcrLine>();
         foreach (var row in rows)
         {
-            // A row band can still contain disjoint columns (e.g. two side-by-side text
-            // blocks at the same Y) — split on large horizontal gaps before treating the
-            // rest as one line of words.
             var ordered = row.OrderBy(b => b.Rect.X).ToList();
             double rowHeight = ordered.Max(b => b.Rect.Height);
             var segments = new List<List<(string Text, System.Windows.Rect Rect)>> { new() { ordered[0] } };

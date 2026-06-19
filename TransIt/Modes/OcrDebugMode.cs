@@ -53,7 +53,7 @@ public class OcrDebugMode : ITranslationMode
             });
 
             // 3. Enumerate all visible windows on this monitor, crop each one, run
-            //    PaddleStructure layout detection, and feed text/table rects into the
+            //    PP-Structure layout detection, and feed text/table rects into the
             //    picker progressively so hover targets appear as each window is processed.
             _ = Task.Run(async () =>
             {

@@ -17,10 +17,9 @@
     <PackageReference Include="OpenAI" Version="2.2.0" />
     <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260602" />
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260602" />
+    <PackageReference Include="RapidOcrNet" Version="2.0.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
     <PackageReference Include="System.Text.Json" Version="9.0.5" />
-    <PackageReference Include="PaddleOCRSharp" Version="6.2.0" />
-    <PackageReference Include="Paddle.Runtime.win_x64" Version="3.3.0.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,10 +32,16 @@
     </None>
   </ItemGroup>
 
-  <!-- Layout detection runs out-of-process (see LayoutService.cs) so its native deps never
-       share a module table with PaddleOCRSharp's same-named but incompatible copies of
-       mkldnn.dll/mklml.dll/libiomp5md.dll. ReferenceOutputAssembly=false because TransIt
-       only launches the worker as a child process; it never links against its assembly. -->
+  <!-- Chinese OCR models go into models\v5\ alongside RapidOcrNet's bundled Latin models -->
+  <Target Name="CopyChineseOcrModels" AfterTargets="Build">
+    <ItemGroup>
+      <ChineseOcrFiles Include="$(MSBuildProjectDirectory)\Assets\OcrModel\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ChineseOcrFiles)" DestinationFolder="$(OutDir)models\v5\" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Layout detection runs out-of-process so its native deps never share a module table
+       with the main process OCR runtime. -->
   <ItemGroup>
     <ProjectReference Include="..\TransIt.LayoutWorker\TransIt.LayoutWorker.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>

@@ -64,7 +64,7 @@ public partial class OverlayCanvas : UserControl
     }
 
     // Ctrl+1 test mode: gray fill = merge-zone expand rects (GroupLinesInRegion threshold),
-    // yellow = raw PaddleOCR line boxes, red = paragraph blocks, cyan dashed = PP-Structure regions.
+    // yellow = raw OCR line boxes, red = paragraph blocks, cyan dashed = PP-Structure regions.
     public void RenderDebugRects(IList<Rect> lineRects, IList<Rect> blockRects,
                                   IList<Rect>? regionRects = null, IList<Rect>? mergeZoneRects = null)
     {

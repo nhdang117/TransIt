@@ -66,7 +66,7 @@ public partial class OverlayWindow : Window
         InstallEscHook();
     }
 
-    /// Ctrl+1 test mode: shows raw PaddleOCR line boxes (yellow), combined
+    /// Ctrl+1 test mode: shows raw OCR line boxes (yellow), combined
     /// paragraph blocks (red), and detected layout regions (cyan dashed) over a
     /// frozen screenshot, no translation involved.
     public void ShowDebugOverlay(IList<Rect> lineRects, IList<Rect> blockRects, BitmapSource background,

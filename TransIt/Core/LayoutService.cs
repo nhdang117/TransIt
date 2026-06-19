@@ -9,9 +9,9 @@ using TransIt.Models;
 
 namespace TransIt.Core;
 
-// Layout detection runs out-of-process. paddle_inference_c.dll (used here) and the OCR
-// engine's PaddleOCR runtime both ship same-named native DLLs (mkldnn.dll, mklml.dll,
-// libiomp5md.dll) but different, incompatible builds - Windows keys its module table by
+// Layout detection runs out-of-process. paddle_inference_c.dll (used here) and the
+// RapidOCR runtime both ship same-named native DLLs (mkldnn.dll, mklml.dll,
+// libiomp5md.dll) but different, incompatible builds — Windows keys its module table by
 // base filename, so whichever loads first in a process wins that name for every other
 // consumer too. OcrService always runs before this in every mode, so in-process layout
 // detection always got OCR's incompatible copies and failed to load. Running the detector
