@@ -50,62 +50,6 @@ public class RegionMode : ITranslationMode
                 picker.Show();
             });
 
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    if (_layout == null) return;
-
-                    var windows = EnumerateWindowsOnMonitor(captureMonRect);
-                    double monLogX = captureMonRect.Left / captureDpi;
-                    double monLogY = captureMonRect.Top  / captureDpi;
-                    var fineLogical = new List<System.Windows.Rect>();
-                    int sentCount = 0;
-
-                    foreach (var winPhysRect in windows)
-                    {
-                        if (tcs.Task.IsCompleted) return;
-
-                        var clipped = System.Drawing.Rectangle.Intersect(winPhysRect, captureMonRect);
-                        int bx = clipped.X - captureMonRect.Left;
-                        int by = clipped.Y - captureMonRect.Top;
-                        int bw = Math.Min(clipped.Width,  monBitmap.Width  - bx);
-                        int bh = Math.Min(clipped.Height, monBitmap.Height - by);
-                        if (bw <= 0 || bh <= 0) continue;
-
-                        using var crop = monBitmap.Clone(
-                            new System.Drawing.Rectangle(bx, by, bw, bh), monBitmap.PixelFormat);
-
-                        List<LayoutRegion> regions;
-                        try { regions = await _layout.DetectAsync(crop, ct); }
-                        catch { continue; }
-
-                        foreach (var sub in regions)
-                        {
-                            if (sub.Category == LayoutCategory.Figure) continue;
-                            if (sub.Confidence < 0.7f) continue;
-                            fineLogical.Add(new System.Windows.Rect(
-                                (sub.BoundingRect.X + bx) / captureDpi + monLogX,
-                                (sub.BoundingRect.Y + by) / captureDpi + monLogY,
-                                sub.BoundingRect.Width  / captureDpi,
-                                sub.BoundingRect.Height / captureDpi));
-                        }
-
-                        if (fineLogical.Count > sentCount)
-                        {
-                            var newRects = fineLogical.Skip(sentCount).ToList();
-                            sentCount = fineLogical.Count;
-                            Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                if (!tcs.Task.IsCompleted)
-                                    picker.AddLayoutRects(newRects, captureDpi);
-                            });
-                        }
-                    }
-                }
-                catch { }
-            }, ct);
-
             await tcs.Task;
             if (picker.Cancelled || picker.SelectedPhysRect is null) return;
             ct.ThrowIfCancellationRequested();

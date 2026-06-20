@@ -9,6 +9,7 @@
         Cursor="Cross"
         KeyDown="OnKeyDown"
         MouseMove="OnMouseMove"
+        MouseWheel="OnMouseWheel"
         MouseLeftButtonDown="OnMouseLeftButtonDown"
         MouseLeftButtonUp="OnMouseLeftButtonUp">
     <Canvas x:Name="OverlayCanvas">
@@ -25,13 +26,6 @@
                    Fill="#1A4CAF50"
                    Stroke="#4CAF50" StrokeThickness="2"
                    StrokeDashArray="6 3"
-                   Visibility="Collapsed"
-                   IsHitTestVisible="False"/>
-
-        <!-- Hover highlight for detected layout regions -->
-        <Rectangle x:Name="LayoutHighlightRect"
-                   Fill="#2200C853"
-                   Stroke="#00C853" StrokeThickness="2"
                    Visibility="Collapsed"
                    IsHitTestVisible="False"/>
 

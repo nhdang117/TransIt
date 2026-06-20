@@ -55,101 +55,26 @@ public class OcrDebugMode : ITranslationMode
             // 3. Enumerate all visible windows on this monitor, crop each one, run
             //    PP-Structure layout detection, and feed text/table rects into the
             //    picker progressively so hover targets appear as each window is processed.
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    if (_layout == null) return;
-
-                    var windows = EnumerateWindowsOnMonitor(captureMonRect);
-                    double monLogX = captureMonRect.Left / captureDpi;
-                    double monLogY = captureMonRect.Top  / captureDpi;
-                    var fineLogical = new List<System.Windows.Rect>();
-                    int sentCount = 0;
-
-                    foreach (var winPhysRect in windows)
-                    {
-                        if (tcs.Task.IsCompleted) return;
-
-                        var clipped = System.Drawing.Rectangle.Intersect(winPhysRect, captureMonRect);
-                        int bx = clipped.X - captureMonRect.Left;
-                        int by = clipped.Y - captureMonRect.Top;
-                        int bw = Math.Min(clipped.Width,  monBitmap.Width  - bx);
-                        int bh = Math.Min(clipped.Height, monBitmap.Height - by);
-                        if (bw <= 0 || bh <= 0) continue;
-
-                        using var crop = monBitmap.Clone(
-                            new System.Drawing.Rectangle(bx, by, bw, bh), monBitmap.PixelFormat);
-
-                        List<LayoutRegion> regions;
-                        try { regions = await _layout.DetectAsync(crop, ct); }
-                        catch { continue; }
-
-                        foreach (var sub in regions)
-                        {
-                            if (sub.Category == LayoutCategory.Figure) continue;
-                            if (sub.Confidence < 0.7f) continue;
-                            fineLogical.Add(new System.Windows.Rect(
-                                (sub.BoundingRect.X + bx) / captureDpi + monLogX,
-                                (sub.BoundingRect.Y + by) / captureDpi + monLogY,
-                                sub.BoundingRect.Width  / captureDpi,
-                                sub.BoundingRect.Height / captureDpi));
-                        }
-
-                        if (fineLogical.Count > sentCount)
-                        {
-                            var newRects = fineLogical.Skip(sentCount).ToList();
-                            sentCount = fineLogical.Count;
-                            Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                if (!tcs.Task.IsCompleted)
-                                    picker.AddLayoutRects(newRects, captureDpi);
-                            });
-                        }
-                    }
-                }
-                catch { /* layout failed — picker still usable in panel mode */ }
-            }, ct);
-
             await tcs.Task;
             if (picker.Cancelled || picker.SelectedPhysRect is null) return;
             ct.ThrowIfCancellationRequested();
 
             var physRect = picker.SelectedPhysRect.Value;
 
-            if (picker.IsLayoutRegion)
-            {
-                // Layout region selected — reuse pre-captured monitor bitmap
-                var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(monBitmap));
-                Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
+            var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
+                physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
+            using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
+            var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(fullBitmap));
+            Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
 
-                int bx = Math.Max(0, physRect.X - captureMonRect.Left);
-                int by = Math.Max(0, physRect.Y - captureMonRect.Top);
-                int bw = Math.Max(1, Math.Min(physRect.Width,  monBitmap.Width  - bx));
-                int bh = Math.Max(1, Math.Min(physRect.Height, monBitmap.Height - by));
-                using var regionBitmap = monBitmap.Clone(
-                    new Rectangle(bx, by, bw, bh), monBitmap.PixelFormat);
+            int bx = Math.Max(0, physRect.X - monRect.Left);
+            int by = Math.Max(0, physRect.Y - monRect.Top);
+            int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
+            int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
+            using var regionBitmap = fullBitmap.Clone(
+                new Rectangle(bx, by, bw, bh), fullBitmap.PixelFormat);
 
-                await RunDebugAsync(regionBitmap, bx, by, captureMonRect, captureDpi, background, ct);
-            }
-            else
-            {
-                // Window panel selected — capture the relevant monitor fresh
-                var (monRect, dpiScale) = DpiHelper.GetMonitorAtPoint(
-                    physRect.X + physRect.Width / 2, physRect.Y + physRect.Height / 2);
-                using var fullBitmap = ScreenCaptureService.CaptureRegion(monRect);
-                var background = Application.Current.Dispatcher.Invoke(() => ToBitmapSource(fullBitmap));
-                Application.Current.Dispatcher.Invoke(() => _overlay.ShowLoadingOverlay(background));
-
-                int bx = Math.Max(0, physRect.X - monRect.Left);
-                int by = Math.Max(0, physRect.Y - monRect.Top);
-                int bw = Math.Max(1, Math.Min(physRect.Width,  fullBitmap.Width  - bx));
-                int bh = Math.Max(1, Math.Min(physRect.Height, fullBitmap.Height - by));
-                using var regionBitmap = fullBitmap.Clone(
-                    new Rectangle(bx, by, bw, bh), fullBitmap.PixelFormat);
-
-                await RunDebugAsync(regionBitmap, bx, by, monRect, dpiScale, background, ct);
-            }
+            await RunDebugAsync(regionBitmap, bx, by, monRect, dpiScale, background, ct);
         }
         catch
         {

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -11,7 +12,6 @@ public partial class WindowPickerOverlay : Window
     public System.Drawing.Rectangle? SelectedPhysRect { get; private set; }
     public double SelectedDpiScale { get; private set; } = 1.0;
     public bool Cancelled { get; private set; }
-    public bool IsLayoutRegion { get; private set; }
 
     private IntPtr _myHwnd;
     private IntPtr _lastHwnd;
@@ -22,9 +22,15 @@ public partial class WindowPickerOverlay : Window
     private Point _dragStartWpf;
     private const double DragThreshold = 5;
 
-    private readonly List<Rect> _layoutRectsCanvas = [];
-    private double _layoutDpiScale = 1.0;
-    private int _hoveredLayoutIdx = -1;
+    private NativeMethods.RECT? _lastUiaRect;
+    private DateTime _lastUiaQuery = DateTime.MinValue;
+    private const int UiaThrottleMs = 80;
+    private const double UiaMinArea = 15_000;   // ~123×122 px minimum panel
+
+    private AutomationElement? _activeElement;  // UIA element currently highlighted
+    private bool _isPinned;                     // scroll locked to an ancestor
+    private NativeMethods.POINT _pinnedAt;      // cursor pos when lock started
+    private const int PinResetPx = 30;          // physical px movement to unpin
 
     public WindowPickerOverlay()
     {
@@ -43,13 +49,6 @@ public partial class WindowPickerOverlay : Window
 
         Canvas.SetLeft(HintBorder, (Width - 420) / 2);
         Canvas.SetTop(HintBorder,  Height - 52);
-    }
-
-    public void AddLayoutRects(IReadOnlyList<Rect> absoluteLogical, double dpiScale)
-    {
-        _layoutDpiScale = dpiScale;
-        foreach (var r in absoluteLogical)
-            _layoutRectsCanvas.Add(new Rect(r.X - Left, r.Y - Top, r.Width, r.Height));
     }
 
     private void OnMouseMove(object sender, MouseEventArgs e)
@@ -77,36 +76,27 @@ public partial class WindowPickerOverlay : Window
             return;
         }
 
-        var canvasPos = e.GetPosition(this);
-
-        // Check layout rects first
-        _hoveredLayoutIdx = -1;
-        for (int i = 0; i < _layoutRectsCanvas.Count; i++)
+        // If scroll-pinned, only unpin when cursor moves far enough
+        if (_isPinned)
         {
-            if (_layoutRectsCanvas[i].Contains(canvasPos)) { _hoveredLayoutIdx = i; break; }
+            NativeMethods.GetCursorPos(out var curPt);
+            int dx = curPt.X - _pinnedAt.X;
+            int dy = curPt.Y - _pinnedAt.Y;
+            if (dx * dx + dy * dy <= PinResetPx * PinResetPx)
+                return;
+            _isPinned = false;
         }
-
-        if (_hoveredLayoutIdx >= 0)
-        {
-            var r = _layoutRectsCanvas[_hoveredLayoutIdx];
-            Canvas.SetLeft(LayoutHighlightRect, r.X);
-            Canvas.SetTop(LayoutHighlightRect,  r.Y);
-            LayoutHighlightRect.Width  = r.Width;
-            LayoutHighlightRect.Height = r.Height;
-            LayoutHighlightRect.Visibility = Visibility.Visible;
-            HighlightRect.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        LayoutHighlightRect.Visibility = Visibility.Collapsed;
 
         // Hover mode: detect window under cursor
         NativeMethods.GetCursorPos(out var pt);
 
+        // Set WS_EX_TRANSPARENT so both WindowFromPoint AND AutomationElement.FromPoint
+        // skip this overlay and hit the real app underneath.
         var exStyle = NativeMethods.GetWindowLong(_myHwnd, NativeMethods.GWL_EXSTYLE);
         NativeMethods.SetWindowLong(_myHwnd, NativeMethods.GWL_EXSTYLE,
             exStyle | NativeMethods.WS_EX_TRANSPARENT);
         var hwnd = NativeMethods.WindowFromPoint(pt);
+        var uiaElement = TryGetUiaElementAtPoint(pt);       // call while still transparent
         NativeMethods.SetWindowLong(_myHwnd, NativeMethods.GWL_EXSTYLE, exStyle);
 
         if (hwnd == IntPtr.Zero || hwnd == _myHwnd) return;
@@ -125,7 +115,66 @@ public partial class WindowPickerOverlay : Window
         _currentDpiScale = dpi > 0 ? dpi / 96.0 : 1.0;
 
         NativeMethods.GetWindowRect(target, out var rect);
-        UpdateHighlight(rect);
+        _lastUiaRect = ResolveUiaPanelRect(uiaElement, rect);
+        UpdateHighlight(_lastUiaRect ?? rect);
+    }
+
+    // Called while overlay has WS_EX_TRANSPARENT — UIA hit-test skips our window.
+    private AutomationElement? TryGetUiaElementAtPoint(NativeMethods.POINT cursorPt)
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastUiaQuery).TotalMilliseconds < UiaThrottleMs)
+            return null;   // throttled; caller uses cached _lastUiaRect
+        _lastUiaQuery = now;
+        try { return AutomationElement.FromPoint(new Point(cursorPt.X, cursorPt.Y)); }
+        catch { return null; }
+    }
+
+    private NativeMethods.RECT? ResolveUiaPanelRect(AutomationElement? element, NativeMethods.RECT windowRect)
+    {
+        if (element == null) return _lastUiaRect;   // throttled — keep last
+
+        try
+        {
+            var walker  = TreeWalker.ControlViewWalker;
+            var current = element;
+
+            while (current != null)
+            {
+                var r = current.Current.BoundingRectangle;
+
+                if (!r.IsEmpty && r.Width * r.Height >= UiaMinArea)
+                {
+                    bool isSubPanel =
+                        r.Left   > windowRect.Left   + 10 ||
+                        r.Top    > windowRect.Top    + 10 ||
+                        r.Right  < windowRect.Right  - 10 ||
+                        r.Bottom < windowRect.Bottom - 10;
+
+                    if (isSubPanel)
+                    {
+                        _activeElement = current;
+                        _lastUiaRect = new NativeMethods.RECT
+                        {
+                            Left   = (int)r.Left,
+                            Top    = (int)r.Top,
+                            Right  = (int)r.Right,
+                            Bottom = (int)r.Bottom
+                        };
+                        return _lastUiaRect;
+                    }
+
+                    _activeElement = current; // full-window element — allow scroll-up from here
+                    break;
+                }
+
+                current = walker.GetParent(current);
+            }
+        }
+        catch { }
+
+        _lastUiaRect = null;
+        return null;
     }
 
     private void UpdateHighlight(NativeMethods.RECT physRect)
@@ -140,6 +189,40 @@ public partial class WindowPickerOverlay : Window
         HighlightRect.Width  = Math.Max(0, logW);
         HighlightRect.Height = Math.Max(0, logH);
         HighlightRect.Visibility = Visibility.Visible;
+    }
+
+    private void OnMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.Delta <= 0 || _activeElement == null) return; // only scroll up
+
+        try
+        {
+            var walker = TreeWalker.ControlViewWalker;
+            var parent = walker.GetParent(_activeElement);
+            while (parent != null)
+            {
+                var r = parent.Current.BoundingRectangle;
+                if (!r.IsEmpty && r.Width * r.Height >= UiaMinArea)
+                {
+                    _activeElement = parent;
+                    _lastUiaRect = new NativeMethods.RECT
+                    {
+                        Left   = (int)r.Left,
+                        Top    = (int)r.Top,
+                        Right  = (int)r.Right,
+                        Bottom = (int)r.Bottom
+                    };
+                    UpdateHighlight(_lastUiaRect.Value);
+                    break;
+                }
+                parent = walker.GetParent(parent);
+            }
+        }
+        catch { }
+
+        NativeMethods.GetCursorPos(out _pinnedAt);
+        _isPinned = true;
+        e.Handled = true;
     }
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -176,22 +259,18 @@ public partial class WindowPickerOverlay : Window
                 (int)physL, (int)physT, (int)physW, (int)physH);
             SelectedDpiScale = _currentDpiScale;
         }
-        else if (_hoveredLayoutIdx >= 0)
-        {
-            var canvas = _layoutRectsCanvas[_hoveredLayoutIdx];
-            double absLogX = canvas.X + Left;
-            double absLogY = canvas.Y + Top;
-            SelectedPhysRect = new System.Drawing.Rectangle(
-                (int)(absLogX * _layoutDpiScale), (int)(absLogY * _layoutDpiScale),
-                (int)(canvas.Width * _layoutDpiScale), (int)(canvas.Height * _layoutDpiScale));
-            SelectedDpiScale = _layoutDpiScale;
-            IsLayoutRegion = true;
-        }
         else
         {
             if (_lastHwnd == IntPtr.Zero) { Cancelled = true; Close(); return; }
-            NativeMethods.GetWindowRect(_lastHwnd, out var rect);
-            SelectedPhysRect = rect.ToRectangle();
+            if (_lastUiaRect.HasValue)
+            {
+                SelectedPhysRect = _lastUiaRect.Value.ToRectangle();
+            }
+            else
+            {
+                NativeMethods.GetWindowRect(_lastHwnd, out var rect);
+                SelectedPhysRect = rect.ToRectangle();
+            }
             SelectedDpiScale = _currentDpiScale;
         }
         Close();
