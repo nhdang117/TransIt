@@ -30,9 +30,17 @@ public class TranslationService
     {
         if (blocks.Count == 0) return new Dictionary<int, string>();
 
+        // Re-clean block text here: OcrService.CleanOcrText ran on raw pre-grouped blocks,
+        // but OcrBlock.FullText joins multiple OCR lines with \n, which can re-introduce
+        // mixed-script artifacts and stray newlines invisible to the earlier per-block pass.
+        var cleanedBlocks = blocks
+            .Select(b => b with { Text = OcrService.CleanOcrText(b.Text) })
+            .Where(b => !string.IsNullOrWhiteSpace(b.Text))
+            .ToList();
+
         return _settings.Provider == TranslationProvider.OpenAI
-            ? await TranslateBlocksOpenAiAsync(blocks, sourceLang, targetLang, ct)
-            : await TranslateBlocksGoogleAsync(blocks, sourceLang, targetLang, ct);
+            ? await TranslateBlocksOpenAiAsync(cleanedBlocks, sourceLang, targetLang, ct)
+            : await TranslateBlocksGoogleAsync(cleanedBlocks, sourceLang, targetLang, ct);
     }
 
     private async Task<Dictionary<int, string>> TranslateBlocksOpenAiAsync(

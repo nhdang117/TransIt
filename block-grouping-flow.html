@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TransIt — Block Grouping (gộp đoạn văn) Call Flow</title>
+<style>
+  :root{
+    --c1:#e8a23a; --c2:#3a7bd5; --c3:#27ae60; --c4:#9b59b6;
+    --c5:#d4900f; --c6:#16a085; --c7:#e74c3c; --c8:#2c3e94;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; font-family:Segoe UI,Consolas,monospace; background:#1b1d23; color:#ddd;}
+  header{
+    position:sticky; top:0; z-index:50; background:#14151a; padding:10px 18px;
+    border-bottom:1px solid #333; display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  }
+  header h1{font-size:15px; margin:0; color:#fff; font-weight:600;}
+  header .legend{display:flex; gap:10px; font-size:11px; flex-wrap:wrap;}
+  header .legend span{display:inline-flex; align-items:center; gap:5px;}
+  header .legend i{width:10px;height:10px;border-radius:2px;display:inline-block;}
+  header .hint{font-size:11px; color:#888; margin-left:auto;}
+  #main{display:flex; height:calc(100vh - 48px);}
+  #flowpanel{flex:0 0 470px; overflow:hidden; background:#1b1d23; border-right:1px solid #333; position:relative; cursor:grab;}
+  #flowpanel.fc-panning{cursor:grabbing;}
+  #fc-viewport{position:absolute; top:0; left:0; transform-origin:0 0; padding:14px 0;}
+  #wrap{position:relative; overflow:hidden; flex:1 1 auto; min-width:0; height:100%; cursor:grab; background:
+    repeating-linear-gradient(0deg, transparent, transparent 39px, #26282f 40px),
+    repeating-linear-gradient(90deg, transparent, transparent 39px, #26282f 40px);
+  }
+  #wrap.panning{cursor:grabbing;}
+  #viewport{position:absolute; top:0; left:0; transform-origin:0 0;}
+  #canvas{position:relative; width:900px; height:860px;}
+  /* IMPORTANT: scope to #svg specifically. A bare `svg{...}` selector will
+     also hijack any other <svg> on the page (e.g. #fc-svg below) and
+     silently fling it off to the page corner. */
+  #svg{position:absolute; top:0; left:0; pointer-events:none; overflow:visible;}
+  .fc-term{fill:#2c3e94; stroke:#5d72d6;}
+  .fc-rect{fill:#22242b; stroke:#3a7bd5; stroke-width:1.5;}
+  .fc-rect.fc-alt{fill:#22242b; stroke:#888; stroke-dasharray:4,3;}
+  .fc-dec{fill:#2a2c1f; stroke:#e8a23a; stroke-width:1.5;}
+  .fc-label{fill:#eee; font-size:11px; text-anchor:middle; dominant-baseline:middle; font-family:Segoe UI,Consolas,monospace;}
+  .fc-label.fc-term-label{fill:#fff; font-weight:700;}
+  .fc-badge{fill:#ffd23f; stroke:#fff; stroke-width:1;}
+  .fc-badge-text{fill:#111; font-size:9px; font-weight:700; text-anchor:middle; dominant-baseline:middle;}
+  .fc-arrowline{stroke:#666; stroke-width:1.5; fill:none;}
+  .fc-arrowline.fc-alt-line{stroke:#888; stroke-dasharray:4,3;}
+  .card{
+    position:absolute; width:210px; border-radius:6px; border:1.5px solid;
+    background:#22242b; box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  .card .hdr{
+    padding:6px 8px; font-size:11px; font-weight:700; border-bottom:1px solid rgba(255,255,255,.15);
+    border-radius:5px 5px 0 0; color:#111; cursor:move; user-select:none;
+  }
+  .card.dragging{box-shadow:0 0 0 2px #ffd23f, 0 6px 18px rgba(0,0,0,.6); z-index:10;}
+  .card .hdr small{display:block; font-weight:400; font-size:9px; opacity:.75;}
+  .fn{
+    position:relative; height:26px; display:flex; align-items:center; font-size:10.5px;
+    padding:0 14px; color:#eee; border-bottom:1px solid rgba(255,255,255,.05);
+    white-space:nowrap;
+  }
+  .fn.alt{color:#999; font-style:italic;}
+  .fn.has-desc{border-bottom:1px dotted #888; cursor:help;}
+  .port{
+    position:absolute; width:9px; height:9px; border-radius:50%;
+    background:#555; border:1.5px solid #aaa; top:50%; transform:translateY(-50%);
+  }
+  .port.l{left:-5px;}
+  .port.r{right:-5px;}
+  .port.active{background:#ffd23f; border-color:#fff; box-shadow:0 0 6px #ffd23f;}
+  .fn.hl{background:rgba(255,210,63,.15);}
+  path.edge{fill:none; stroke:#555; stroke-width:1.6; opacity:.55; marker-end:url(#arrow-gray);}
+  path.edge.main{stroke:#ffd23f; stroke-width:2.2; opacity:.95; marker-end:url(#arrow-yellow);}
+  path.edge.hl-in{stroke:#4aa8ff !important; stroke-width:3 !important; opacity:1 !important; marker-end:url(#arrow-blue) !important;}
+  path.edge.hl-out{stroke:#ff5f5f !important; stroke-width:3 !important; opacity:1 !important; marker-end:url(#arrow-red) !important;}
+  text.step{font-size:10px; fill:#ffd23f; font-weight:700;}
+  .group-label{
+    position:absolute; top:-22px; left:0; font-size:11px; font-weight:700; letter-spacing:.5px;
+    text-transform:uppercase; opacity:.85;
+  }
+  .zoomctl{display:flex; align-items:center; gap:6px; font-size:12px;}
+  .zoomctl button{
+    background:#2a2c34; color:#ddd; border:1px solid #444; border-radius:4px;
+    width:24px; height:24px; cursor:pointer; font-size:14px; line-height:1;
+  }
+  .zoomctl button:hover{background:#3a3c46;}
+  .zoomctl #zoomReset{width:auto; padding:0 8px;}
+  #zoomPct{width:38px; text-align:center; color:#aaa;}
+</style>
+</head>
+<body>
+<header>
+  <h1>TransIt — Block Grouping (gộp đoạn văn) Call Flow</h1>
+  <div class="legend" id="legend"></div>
+  <div class="hint">Left: drag/wheel = pan/zoom flowchart. Right: same for call-flow. Drag card header = move. Hover function = blue in / red out.</div>
+  <div class="zoomctl">
+    <button id="zoomOut">−</button>
+    <span id="zoomPct">100%</span>
+    <button id="zoomIn">+</button>
+    <button id="zoomReset">Reset</button>
+  </div>
+</header>
+<div id="main">
+<div id="flowpanel">
+  <div id="fc-viewport">
+  <svg id="fc-svg" width="470" height="900">
+    <defs>
+      <marker id="fc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+      </marker>
+      <marker id="fc-arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+      </marker>
+    </defs>
+  </svg>
+  </div>
+</div>
+<div id="wrap">
+<div id="viewport">
+<div id="canvas">
+  <svg id="svg" width="900" height="860">
+    <defs>
+      <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+      </marker>
+      <marker id="arrow-yellow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#ffd23f"/>
+      </marker>
+      <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#ff5f5f"/>
+      </marker>
+      <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#4aa8ff"/>
+      </marker>
+    </defs>
+  </svg>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+/* ============================================================================
+   DATA SECTION
+   ============================================================================ */
+
+const FOLDER = {
+  Modes:  {c:'var(--c3)'},
+  Core:   {c:'var(--c2)'},
+  Models: {c:'var(--c4)'},
+};
+
+const COL_X = 340;
+
+// Card heights: HDR_H(36) + fns.length * ROW_H(26)
+// RegionMode:       1 fn → h=62.  y=30
+// LayoutGrouping:   1 fn → h=62.  y=132
+// LayoutService:    2 fn → h=88.  y=234
+// OcrBlock-grouping:2 fn → h=88.  y=362   ← split from monolithic OcrBlock to
+// OcrBlock-helpers: 2 fn → h=88.  y=490      eliminate 6-way self-loop pile at belowY.
+// OcrBlock-fallback:3 fn → h=114. y=618      Now at most 1–2 self-loops per card.
+const cards = [
+  { id:'RegionMode', file:'RegionMode.cs', sub:'Modes/', folder:'Modes', x:COL_X, y:30, fns:[
+    {id:'run_overlay', t:'RunOverlayMode()',
+     desc:'After OCR, offsets OcrLine rects to full-monitor coords, then calls GroupLinesAsync to group them into paragraph blocks, translates, and renders the frozen overlay.'},
+  ]},
+
+  { id:'LayoutGrouping', file:'LayoutGrouping.cs', sub:'Core/', folder:'Core', x:COL_X, y:132, fns:[
+    {id:'group_lines_async', t:'GroupLinesAsync()',
+     desc:'Dispatch: if layout is null → GroupLines (fallback). Otherwise calls DetectAsync, applies dx/dy offset to region rects (needed when bitmap is a crop and OcrLine coords are in the larger surface space), then calls GroupLinesWithLayout. If DetectAsync throws → GroupLines fallback. A layout failure must never break translation.'},
+  ]},
+
+  { id:'LayoutService', file:'LayoutService.cs', sub:'Core/', folder:'Core', x:COL_X, y:234, fns:[
+    {id:'detect_async', t:'DetectAsync()',
+     desc:'Encodes bitmap to PNG bytes, acquires a mutex lock, sends payload via framed 4-byte-length+body protocol to the child process stdin, reads the JSON response from stdout. Returns List<LayoutRegion> with category (Text/Title/List/Table/Figure) and bounding rect. On any error, kills the worker (framing state is dirty) and rethrows.'},
+    {id:'start_worker', t:'GetOrStartWorker()', alt:true,
+     desc:'Lazily starts TransIt.LayoutWorker.exe with modelDir arg; redirects stdin/stdout for the framed protocol. Spawns a fire-and-forget Task that continuously drains stderr — PaddleInference glog writes ~88 lines at startup and fills the OS stderr buffer, which deadlocks the worker mid-request if nothing reads it.'},
+  ]},
+
+  // OcrBlock split into 3 sub-cards so each has ≤1 self-loop (steps 5,6 become cross-card).
+  { id:'OcrBlockG', file:'OcrBlock.cs', sub:'Models/ · layout path', folder:'Models', x:COL_X, y:362, fns:[
+    {id:'group_with_layout', t:'GroupLinesWithLayout()',
+     desc:'Top-down grouping: for each OcrLine, finds the LayoutRegion that covers the largest fraction of the LINE\'s own area (not the region\'s area — line boxes are tiny). Assigns line to that region if coverage ≥55%. Unassigned lines fall back to GroupLines. Per-region results are merged and sorted by Y then X.'},
+    {id:'group_in_region', t:'GroupLinesInRegion()',
+     desc:'Gap-based consecutive union-find within one layout region. Sorts lines by Y, calls getGroupMergeThreshold for the gap threshold, then loops consecutive pairs: gap ≤ threshold → Union(i, i+1). Passes each merged group to SplitOnShortLines for paragraph-break detection.'},
+  ]},
+
+  { id:'OcrBlockH', file:'OcrBlock.cs', sub:'Models/ · region internals', folder:'Models', x:COL_X, y:490, fns:[
+    {id:'get_merge_threshold', t:'getGroupMergeThreshold()',
+     desc:'Collects consecutive Y-gaps > 10% avgHeight (filters OCR-noise overlaps), sorts them, returns median × 1.5. Median is more stable than min when a region mixes tightly-spaced and loosely-spaced lines (e.g. a header above body text).'},
+    {id:'split_short', t:'SplitOnShortLines()',
+     desc:'Scans a merged group: any non-last line whose width < 55% of the group\'s widest line triggers a split after it — signals a manual Enter or a ragged paragraph-end. The very last line is never tested (a short final line is expected and must not split away).'},
+  ]},
+
+  { id:'OcrBlockF', file:'OcrBlock.cs', sub:'Models/ · fallback', folder:'Models', x:COL_X, y:618, fns:[
+    {id:'group_lines', t:'GroupLines()', alt:true,
+     desc:'Fallback all-pairs union-find: N×N loop over all OcrLine pairs. Calls EstimateLinePitch once for a global gap baseline, then ShouldMerge for every (i,j) pair. All-pairs (not sequential) is required because multi-column captures interleave columns in Y-sort order — sequential merging would incorrectly connect across columns.'},
+    {id:'estimate_pitch', t:'EstimateLinePitch()', alt:true,
+     desc:'For each OcrLine, scans all lines below it that are horizontally aligned, picks the nearest one, records that Y-gap. Returns the median of all collected nearest-neighbor gaps — a data-driven global line-pitch estimate that adapts to the document\'s actual line spacing.'},
+    {id:'should_merge', t:'ShouldMerge()', alt:true,
+     desc:'Four conditions must ALL hold: (1) horizontal overlap > 0 or gutter ≤ 0.5× localH; (2) height ratio ≤ 1.25×; (3) vertical gap ≤ max(localH × 1.0, medianPitch × 1.3); (4) top line width ≥ 60% of bottom line width — a short top line signals a paragraph break, a short bottom line is just a wrapped last line and must not block the merge.'},
+  ]},
+];
+
+const calls = [
+  // ── Main numbered path ──────────────────────────────────────────────────────
+  // Steps 1–3: cross-card edges (clean lane-routing, no overlap)
+  {from:'run_overlay',        to:'group_lines_async',   step:1,
+   desc:'After OCR lines are produced and offset to full-monitor coords, hands them to GroupLinesAsync with the LayoutService instance and the cropped region bitmap.'},
+  {from:'group_lines_async',  to:'detect_async',         step:2,
+   desc:'Calls DetectAsync to get layout regions from PicoDet before deciding how to cluster OcrLines into blocks.'},
+  {from:'group_lines_async',  to:'group_with_layout',    step:3,
+   desc:'After DetectAsync returns and region rects are offset by dx/dy to match OcrLine coord space, calls GroupLinesWithLayout for top-down layout-guided paragraph grouping.'},
+  // Step 4: single self-loop within OcrBlockG (group_with_layout → group_in_region)
+  {from:'group_with_layout',  to:'group_in_region',      step:4,
+   desc:'For each layout region that has ≥1 assigned OcrLine, calls GroupLinesInRegion to cluster those lines into paragraph blocks within the region.'},
+  // Steps 5–6: cross-card OcrBlockG → OcrBlockH (separate card eliminates self-loop pile)
+  {from:'group_in_region',    to:'get_merge_threshold',  step:5,
+   desc:'Called once per region invocation to compute the Y-gap threshold (medianGap × 1.5) before the consecutive union-find loop starts.'},
+  {from:'group_in_region',    to:'split_short',          step:6,
+   desc:'After the union-find merge phase, called on each resulting group to split at any non-last line <55% of max width — catching manual paragraph breaks inside a region.'},
+
+  // ── Alt / fallback paths ─────────────────────────────────────────────────────
+  {from:'group_lines_async',  to:'group_lines',          step:null,
+   desc:'Fallback: used when LayoutService is null (disabled in settings) OR when DetectAsync throws. The catch block calls GroupLines so a layout-worker crash never prevents translation.'},
+  {from:'detect_async',       to:'start_worker',         step:null,
+   desc:'Called internally each request to lazily start or reuse the persisted child process.'},
+  {from:'group_with_layout',  to:'group_lines',          step:null,
+   desc:'OcrLines that no layout region covers at ≥55% of the line\'s area are "unassigned"; they go here for all-pairs union-find fallback grouping so no text is dropped.'},
+  // 2 self-loops in OcrBlockF — both from same port, some overlap; acceptable (only 2 gray wires)
+  {from:'group_lines',        to:'estimate_pitch',       step:null,
+   desc:'Called once before any pair comparisons to establish the global line-pitch baseline from nearest-neighbor gaps.'},
+  {from:'group_lines',        to:'should_merge',         step:null,
+   desc:'Called for every (i, j) pair in the N×N loop to decide if the two OcrLines should be united into the same paragraph block.'},
+];
+
+// ── Flowchart panel nodes ─────────────────────────────────────────────────────
+// Engine auto-computes y; provide type / h / lines / step / alt only.
+// IMPORTANT: decision node h must be ≥ alt.h — the engine centers the alt box
+// on the diamond's cy, so if h < alt.h the box extends above the diamond and
+// overlaps the preceding node. FC_ALT_CX is set to 400 (below) so the
+// connecting arrow is ~35px long instead of ~1px.
+const fcNodes = [
+  {type:'term', h:40,  lines:['Start: Ctrl+2 → RunOverlayMode()']},
+  {type:'proc', h:56,  step:1, lines:['[1] GroupLinesAsync()','lines + LayoutService + bitmap + dx/dy']},
+  // h=94 ≥ alt h=90 → alt box stays within the diamond's y-range, 18px gap to neighbors
+  {type:'dec',  h:94,  lines:['Layout available','& DetectAsync ok?'],
+   alt:{w:120, h:90, lines:['NO / throws:','GroupLines()','all-pairs N×N','union-find']}},
+  {type:'proc', h:56,  step:2, lines:['[2] LayoutService.DetectAsync()','PicoDet child → List<LayoutRegion>']},
+  {type:'proc', h:56,  step:3, lines:['[3] GroupLinesWithLayout()','assign each OcrLine to best region (≥55%)']},
+  // h=64 ≥ alt h=48 → no upward bleed; shorter alt box (2 lines) needs less height
+  {type:'dec',  h:64,  lines:['Unassigned lines?'],
+   alt:{w:120, h:48,  lines:['GroupLines()','fallback union-find']}},
+  {type:'proc', h:56,  step:4, lines:['[4] GroupLinesInRegion() per region','consecutive union-find, sorted Y']},
+  {type:'proc', h:44,  step:5, lines:['[5] getGroupMergeThreshold()','medianGap × 1.5']},
+  {type:'proc', h:44,  step:6, lines:['[6] SplitOnShortLines()','split at non-last lines < 55% max width']},
+  {type:'term', h:40,  lines:['End: List<OcrBlock> → TranslationService']},
+];
+
+const TITLE_TEXT = document.title;
+
+/* ============================================================================
+   ENGINE — generic rendering, drag, pan/zoom, auto-routing.
+   ============================================================================ */
+
+(function(){
+  const legend = document.getElementById('legend');
+  Object.entries(FOLDER).forEach(([name,f])=>{
+    const span = document.createElement('span');
+    span.innerHTML = `<i style="background:${f.c}"></i>${name}`;
+    legend.appendChild(span);
+  });
+})();
+
+const CARD_W = 210, ROW_H = 26, HDR_H = 36;
+
+const cardById = {}; cards.forEach(c=>cardById[c.id]=c);
+const fnLoc = {};
+cards.forEach(c=>c.fns.forEach((f,i)=>{ fnLoc[f.id]={card:c, idx:i}; }));
+
+function cardHeight(c){ return HDR_H + c.fns.length*ROW_H; }
+
+function portXY(fnId, side){
+  const loc = fnLoc[fnId];
+  const y = loc.card.y + HDR_H + loc.idx*ROW_H + ROW_H/2;
+  const x = side==='l' ? loc.card.x : loc.card.x + CARD_W;
+  return [x,y];
+}
+
+const canvas = document.getElementById('canvas');
+const cardDiv = {};
+
+cards.forEach(c=>{
+  const f = FOLDER[c.folder] || {c:'#888'};
+  const div = document.createElement('div');
+  div.className='card';
+  div.style.left=c.x+'px'; div.style.top=c.y+'px';
+  div.style.borderColor=f.c;
+  div.style.height = (HDR_H + c.fns.length*ROW_H)+'px';
+  div.innerHTML = `<div class="group-label" style="color:${f.c}">${c.folder}</div>
+    <div class="hdr" style="background:${f.c}">${c.file}<small>${c.sub||''}</small></div>`;
+  c.fns.forEach(fn=>{
+    const row = document.createElement('div');
+    row.className='fn'+(fn.alt?' alt':'')+(fn.desc?' has-desc':'');
+    row.dataset.id = fn.id;
+    if(fn.desc) row.title = fn.desc;
+    row.innerHTML = `<span class="port l" data-id="${fn.id}"></span>${fn.t}<span class="port r" data-id="${fn.id}"></span>`;
+    div.appendChild(row);
+  });
+  canvas.appendChild(div);
+  cardDiv[c.id]=div;
+});
+
+const svg = document.getElementById('svg');
+const edgeEls = [];
+calls.forEach(call=>{
+  const isSelfLoop = fnLoc[call.from].card === fnLoc[call.to].card;
+  const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('class','edge'+(call.step?' main':'')+(isSelfLoop?' selfloop':''));
+  path.setAttribute('pointer-events', call.desc ? 'stroke' : 'none');
+  path.dataset.from=call.from; path.dataset.to=call.to;
+  if(call.desc){
+    const title = document.createElementNS('http://www.w3.org/2000/svg','title');
+    title.textContent = call.desc;
+    path.appendChild(title);
+  }
+  svg.appendChild(path);
+  let text=null;
+  if(call.step){
+    text = document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.setAttribute('class','step');
+    text.textContent = call.step;
+    svg.appendChild(text);
+  }
+  edgeEls.push({call, path, text});
+});
+
+function roundedPath(points, r){
+  let d = `M${points[0][0]},${points[0][1]}`;
+  for(let i=1;i<points.length-1;i++){
+    const [x0,y0]=points[i-1], [x1,y1]=points[i], [x2,y2]=points[i+1];
+    const d1 = Math.hypot(x1-x0,y1-y0)||1, d2 = Math.hypot(x2-x1,y2-y1)||1;
+    const r1 = Math.min(r, d1/2), r2 = Math.min(r, d2/2);
+    const xa = x1-(x1-x0)/d1*r1, ya = y1-(y1-y0)/d1*r1;
+    const xb = x1+(x2-x1)/d2*r2, yb = y1+(y2-y1)/d2*r2;
+    d += ` L${xa},${ya} Q${x1},${y1} ${xb},${yb}`;
+  }
+  const last = points[points.length-1];
+  d += ` L${last[0]},${last[1]}`;
+  return d;
+}
+
+const CORNER_R = 8;
+const BASE_MAIN = 18;
+const BASE_ALT  = 40;
+const LANE_STEP = 20;
+const PAD = 10;
+
+const rightLanes = [];
+const leftLanes  = [];
+let rightUsed = 0, leftUsed = 0;
+
+function claimLane(lanes, minY, maxY){
+  for(let i=0;i<lanes.length;i++){
+    const free = !lanes[i].some(iv => !(maxY < iv.min - PAD || minY > iv.max + PAD));
+    if(free){ lanes[i].push({min:minY,max:maxY}); return i; }
+  }
+  lanes.push([{min:minY,max:maxY}]);
+  return lanes.length-1;
+}
+
+const crossCardEdges = edgeEls
+  .filter(e => fnLoc[e.call.from].card !== fnLoc[e.call.to].card)
+  .map(e => {
+    const [,y1] = portXY(e.call.from,'r'), [,y2] = portXY(e.call.to,'r');
+    return {e, minY:Math.min(y1,y2), maxY:Math.max(y1,y2), span:Math.abs(y2-y1)};
+  })
+  .sort((a,b) => a.span - b.span);
+
+crossCardEdges.forEach(({e, minY, maxY}) => {
+  const side = rightUsed <= leftUsed ? 'r' : 'l';
+  const lanes = side==='r' ? rightLanes : leftLanes;
+  const lane = claimLane(lanes, minY, maxY);
+  e.call.side = side; e.call.lane = lane;
+  if(side==='r') rightUsed++; else leftUsed++;
+});
+
+function routeEdge(x1, y1, x2, y2, laneX){
+  return roundedPath([[x1,y1],[laneX,y1],[laneX,y2],[x2,y2]], CORNER_R);
+}
+
+function selfLoopPath(card, fromId, toId){
+  const [x1,y1] = portXY(fromId,'r');
+  const [x2,y2] = portXY(toId,'l');
+  const outX = x1 + 30, inX = x2 - 30;
+  const belowY = card.y + cardHeight(card) + 22;
+  return roundedPath([[x1,y1],[outX,y1],[outX,belowY],[inX,belowY],[inX,y2],[x2,y2]], CORNER_R);
+}
+
+function redrawEdges(){
+  edgeEls.forEach(({call,path,text})=>{
+    const fromCard = fnLoc[call.from].card, toCard = fnLoc[call.to].card;
+    if(fromCard === toCard){
+      path.setAttribute('d', selfLoopPath(fromCard, call.from, call.to));
+      if(text){
+        const [x1,y1] = portXY(call.from,'r');
+        text.setAttribute('x', x1 + 16);
+        text.setAttribute('y', y1 - 6);
+      }
+      return;
+    }
+    const base = call.step ? BASE_MAIN : BASE_ALT;
+    const offset = base + call.lane*LANE_STEP;
+    const port = call.side==='r' ? 'r' : 'l';
+    const [x1,y1] = portXY(call.from, port);
+    const [x2,y2] = portXY(call.to, port);
+    const laneX = call.side==='r' ? x1 + offset : x1 - offset;
+    path.setAttribute('d', routeEdge(x1,y1,x2,y2,laneX));
+    if(text){
+      text.setAttribute('x', call.side==='r' ? laneX + 8 : laneX - 8);
+      text.setAttribute('y', (y1+y2)/2);
+    }
+  });
+}
+redrawEdges();
+
+// card dragging
+let dragCard=null, dragStart=null;
+cards.forEach(c=>{
+  const hdr = cardDiv[c.id].querySelector('.hdr');
+  hdr.addEventListener('mousedown', e=>{
+    e.stopPropagation();
+    dragCard=c;
+    cardDiv[c.id].classList.add('dragging');
+    dragStart = {mx:e.clientX, my:e.clientY, cx:c.x, cy:c.y};
+  });
+});
+window.addEventListener('mousemove', e=>{
+  if(!dragCard) return;
+  const dx = (e.clientX - dragStart.mx)/scale;
+  const dy = (e.clientY - dragStart.my)/scale;
+  dragCard.x = dragStart.cx + dx;
+  dragCard.y = dragStart.cy + dy;
+  const div = cardDiv[dragCard.id];
+  div.style.left = dragCard.x+'px';
+  div.style.top  = dragCard.y+'px';
+  redrawEdges();
+});
+window.addEventListener('mouseup', ()=>{
+  if(dragCard){ cardDiv[dragCard.id].classList.remove('dragging'); dragCard=null; }
+});
+
+// pan & zoom
+const wrap = document.getElementById('wrap');
+const viewport = document.getElementById('viewport');
+let scale=1, panX=0, panY=0;
+const zoomPct = document.getElementById('zoomPct');
+
+function applyTransform(){
+  viewport.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  zoomPct.textContent = Math.round(scale*100)+'%';
+}
+
+function setZoom(newScale, cx, cy){
+  newScale = Math.min(2.5, Math.max(0.3, newScale));
+  panX = cx - (cx - panX) * (newScale/scale);
+  panY = cy - (cy - panY) * (newScale/scale);
+  scale = newScale;
+  applyTransform();
+}
+
+wrap.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const rect = wrap.getBoundingClientRect();
+  const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+  setZoom(scale*factor, cx, cy);
+}, {passive:false});
+
+document.getElementById('zoomIn').onclick  = ()=> setZoom(scale*1.2, wrap.clientWidth/2, wrap.clientHeight/2);
+document.getElementById('zoomOut').onclick = ()=> setZoom(scale/1.2, wrap.clientWidth/2, wrap.clientHeight/2);
+document.getElementById('zoomReset').onclick = ()=>{ scale=1; panX=0; panY=0; applyTransform(); };
+
+let panDrag=null;
+wrap.addEventListener('mousedown', e=>{
+  if(dragCard) return;
+  if(e.target.closest('.card')) return;
+  panDrag = {mx:e.clientX, my:e.clientY, px:panX, py:panY};
+  wrap.classList.add('panning');
+});
+window.addEventListener('mousemove', e=>{
+  if(!panDrag) return;
+  panX = panDrag.px + (e.clientX - panDrag.mx);
+  panY = panDrag.py + (e.clientY - panDrag.my);
+  applyTransform();
+});
+window.addEventListener('mouseup', ()=>{
+  if(panDrag){ panDrag=null; wrap.classList.remove('panning'); }
+});
+
+// hover highlight
+document.querySelectorAll('.fn').forEach(row=>{
+  row.addEventListener('mouseenter', ()=>{
+    const id = row.dataset.id;
+    document.querySelectorAll(`path[data-from="${id}"]`).forEach(p=>p.classList.add('hl-out'));
+    document.querySelectorAll(`path[data-to="${id}"]`).forEach(p=>{
+      p.classList.add(p.classList.contains('selfloop') ? 'hl-out' : 'hl-in');
+    });
+    document.querySelectorAll(`.port[data-id="${id}"]`).forEach(p=>p.classList.add('active'));
+    row.classList.add('hl');
+  });
+  row.addEventListener('mouseleave', ()=>{
+    const id = row.dataset.id;
+    document.querySelectorAll(`path[data-from="${id}"], path[data-to="${id}"]`).forEach(p=>p.classList.remove('hl-in','hl-out'));
+    document.querySelectorAll(`.port[data-id="${id}"]`).forEach(p=>p.classList.remove('active'));
+    row.classList.remove('hl');
+  });
+});
+
+/* ---- flowchart panel ---- */
+(function(){
+  // FC_ALT_CX=400: diamond right edge is at FC_CX+FC_W/2=305; alt box left edge
+  // at 400-aw/2=340 → 35px arrow. Previous value of 370 gave a 1px invisible arrow.
+  const FC_CX = 210, FC_ALT_CX = 400, FC_W = 190, GAP = 16;
+  const fcSvg = document.getElementById('fc-svg');
+
+  let y = 20;
+  const laidOut = fcNodes.map(n=>{
+    const ny = y;
+    y += n.h + GAP;
+    return {...n, y:ny};
+  });
+  const totalH = y + 20;
+  fcSvg.setAttribute('height', totalH);
+  fcSvg.setAttribute('viewBox', `0 0 470 ${totalH}`);
+
+  function fcText(x,y,lines,cls){
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('class', cls);
+    t.setAttribute('x', x);
+    const lh = 13;
+    const startY = y - (lines.length-1)*lh/2;
+    lines.forEach((line,i)=>{
+      const tspan = document.createElementNS('http://www.w3.org/2000/svg','tspan');
+      tspan.setAttribute('x', x);
+      tspan.setAttribute('y', startY + i*lh);
+      tspan.textContent = line;
+      t.appendChild(tspan);
+    });
+    return t;
+  }
+
+  function fcArrow(x1,y1,x2,y2,alt){
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('class', 'fc-arrowline'+(alt?' fc-alt-line':''));
+    p.setAttribute('marker-end', alt ? 'url(#fc-arrow-gray)' : 'url(#fc-arrow)');
+    p.setAttribute('d', `M${x1},${y1} L${x2},${y2}`);
+    fcSvg.appendChild(p);
+  }
+
+  laidOut.forEach((n,i)=>{
+    const cy = n.y + n.h/2;
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    if(n.type==='term'){
+      const el = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+      el.setAttribute('class','fc-term');
+      el.setAttribute('cx', FC_CX); el.setAttribute('cy', cy);
+      el.setAttribute('rx', FC_W/2); el.setAttribute('ry', n.h/2);
+      g.appendChild(el);
+      g.appendChild(fcText(FC_CX, cy, n.lines, 'fc-label fc-term-label'));
+    } else if(n.type==='dec'){
+      const w = FC_W, h = n.h;
+      const pts = [[FC_CX, n.y],[FC_CX+w/2, cy],[FC_CX, n.y+h],[FC_CX-w/2, cy]].map(p=>p.join(',')).join(' ');
+      const el = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      el.setAttribute('class','fc-dec');
+      el.setAttribute('points', pts);
+      g.appendChild(el);
+      g.appendChild(fcText(FC_CX, cy, n.lines, 'fc-label'));
+    } else {
+      const el = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      el.setAttribute('class','fc-rect');
+      el.setAttribute('x', FC_CX-FC_W/2); el.setAttribute('y', n.y);
+      el.setAttribute('width', FC_W); el.setAttribute('height', n.h);
+      el.setAttribute('rx', 4);
+      g.appendChild(el);
+      g.appendChild(fcText(FC_CX, cy, n.lines, 'fc-label'));
+      if(n.step){
+        const badge = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        badge.setAttribute('class','fc-badge');
+        badge.setAttribute('cx', FC_CX-FC_W/2+10); badge.setAttribute('cy', n.y+10); badge.setAttribute('r', 9);
+        g.appendChild(badge);
+        const bt = document.createElementNS('http://www.w3.org/2000/svg','text');
+        bt.setAttribute('class','fc-badge-text');
+        bt.setAttribute('x', FC_CX-FC_W/2+10); bt.setAttribute('y', n.y+11);
+        bt.textContent = n.step;
+        g.appendChild(bt);
+      }
+    }
+    fcSvg.appendChild(g);
+
+    if(i>0) fcArrow(FC_CX, laidOut[i-1].y+laidOut[i-1].h, FC_CX, n.y, false);
+
+    if(n.alt){
+      const aw = n.alt.w, ah = n.alt.h, ax = FC_ALT_CX;
+      const ay = Math.max(n.y, n.y + n.h/2 - ah/2); // clamp: never bleed above diamond top
+      const ael = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      ael.setAttribute('class','fc-rect fc-alt');
+      ael.setAttribute('x', ax-aw/2); ael.setAttribute('y', ay);
+      ael.setAttribute('width', aw); ael.setAttribute('height', ah);
+      ael.setAttribute('rx', 4);
+      fcSvg.appendChild(ael);
+      fcSvg.appendChild(fcText(ax, ay+ah/2, n.alt.lines, 'fc-label'));
+      fcArrow(FC_CX+FC_W/2, cy, ax-aw/2, ay+ah/2, true);
+    }
+  });
+})();
+
+/* ---- flowchart panel pan/zoom ---- */
+(function(){
+  const panel = document.getElementById('flowpanel');
+  const fcVp  = document.getElementById('fc-viewport');
+  let fcScale=1, fcPanX=0, fcPanY=0, fcDrag=null;
+
+  function applyFcTransform(){
+    fcVp.style.transform = `translate(${fcPanX}px,${fcPanY}px) scale(${fcScale})`;
+  }
+
+  panel.addEventListener('wheel', e=>{
+    e.preventDefault();
+    const rect = panel.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+    const ns = Math.min(3, Math.max(0.25, fcScale * factor));
+    fcPanX = cx - (cx - fcPanX) * (ns/fcScale);
+    fcPanY = cy - (cy - fcPanY) * (ns/fcScale);
+    fcScale = ns;
+    applyFcTransform();
+  }, {passive:false});
+
+  panel.addEventListener('mousedown', e=>{
+    if(e.button !== 0) return;
+    fcDrag = {mx:e.clientX, my:e.clientY, px:fcPanX, py:fcPanY};
+    panel.classList.add('fc-panning');
+  });
+  window.addEventListener('mousemove', e=>{
+    if(!fcDrag) return;
+    fcPanX = fcDrag.px + (e.clientX - fcDrag.mx);
+    fcPanY = fcDrag.py + (e.clientY - fcDrag.my);
+    applyFcTransform();
+  });
+  window.addEventListener('mouseup', ()=>{
+    if(fcDrag){ fcDrag=null; panel.classList.remove('fc-panning'); }
+  });
+})();
+</script>
+</body>
+</html>

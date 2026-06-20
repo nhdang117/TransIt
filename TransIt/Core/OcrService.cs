@@ -9,7 +9,7 @@ using AppOcrWord = TransIt.Models.OcrWord;
 
 namespace TransIt.Core;
 
-public class OcrService : IDisposable
+public partial class OcrService : IDisposable
 {
     private readonly SemaphoreSlim _engineLock = new(1, 1);
     private RapidOcr? _engine;
@@ -40,9 +40,17 @@ public class OcrService : IDisposable
 
         sw.Restart();
         var rawBlocks = (result.TextBlocks ?? [])
+            .Select(b => (Text: CleanOcrText(b.Text), Rect: BoundingRectOf(b.BoxPoints)))
             .Where(b => !string.IsNullOrWhiteSpace(b.Text))
-            .Select(b => (Text: b.Text, Rect: BoundingRectOf(b.BoxPoints)))
             .ToList();
+
+        // If capture is primarily non-CJK (Latin/etc.), pure-CJK blocks are OCR noise —
+        // drop them before grouping so they don't get merged into Latin paragraphs.
+        int totalLetters = rawBlocks.Sum(b => b.Text.Count(char.IsLetter));
+        int cjkLetters   = rawBlocks.Sum(b => b.Text.Count(IsCjkIdeograph));
+        bool documentIsPrimarilyNonCjk = totalLetters > 0 && (double)cjkLetters / totalLetters < 0.5;
+        if (documentIsPrimarilyNonCjk)
+            rawBlocks = [.. rawBlocks.Where(b => !b.Text.All(c => IsCjkIdeograph(c) || !char.IsLetter(c)))];
 
         var lines = GroupIntoLines(rawBlocks);
         Debug.WriteLine($"[OCR] group_lines  = {sw.ElapsedMilliseconds} ms  ({rawBlocks.Count} blocks → {lines.Count} lines)");
@@ -135,6 +143,61 @@ public class OcrService : IDisposable
         }
         return new System.Windows.Rect(minX, minY, Math.Max(0, maxX - minX), Math.Max(0, maxY - minY));
     }
+
+    // internal so TranslationService can apply it again on grouped OcrBlock.FullText
+    internal static string CleanOcrText(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        // Normalize chars; keep \n as segment separator for per-line processing below.
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            var cat = char.GetUnicodeCategory(c);
+            if (c == '\r' || c == '\n')
+                sb.Append('\n');
+            else if (cat == System.Globalization.UnicodeCategory.Control)
+                sb.Append(' ');
+            else if (cat is System.Globalization.UnicodeCategory.PrivateUse
+                          or System.Globalization.UnicodeCategory.Surrogate
+                          or System.Globalization.UnicodeCategory.Format
+                          or System.Globalization.UnicodeCategory.OtherNotAssigned)
+            { /* drop */ }
+            else
+                sb.Append(c);
+        }
+
+        // Process each segment independently so a pure-CJK OCR artifact line that was
+        // later merged with a Latin line (by OcrBlock.GroupLines) is stripped on its own
+        // rather than only when the whole joined string has mixed script.
+        var segments = sb.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var parts = new List<string>(segments.Length);
+        foreach (var seg in segments)
+        {
+            bool hasCjk = seg.Any(IsCjkIdeograph);
+            bool hasNonCjkLetter = seg.Any(c => char.IsLetter(c) && !IsCjkIdeograph(c));
+            string s = (hasCjk && hasNonCjkLetter)
+                ? string.Concat(seg.Where(c => !IsCjkIdeograph(c)))
+                : seg;
+
+            // Strip artifact chars at line start: brackets, backslash, stray ellipsis/middle-dot
+            s = s.TrimStart(']', '[', '}', '{', '|', '\\', '~', '`', '^',
+                            '…', '‥', '·', '・');
+            s = WhitespaceRun.Replace(s, " ").Trim();
+            if (s.Length > 0) parts.Add(s);
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex WhitespaceRun =
+        new(@"\s+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // CJK Unified Ideographs + Extension A + Compatibility Ideographs
+    private static bool IsCjkIdeograph(char c) =>
+        (c >= '一' && c <= '鿿') ||
+        (c >= '㐀' && c <= '䶿') ||
+        (c >= '豈' && c <= '﫿');
 
     private static List<AppOcrLine> GroupIntoLines(List<(string Text, System.Windows.Rect Rect)> rawBlocks)
     {

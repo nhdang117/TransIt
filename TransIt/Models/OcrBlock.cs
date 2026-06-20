@@ -50,8 +50,14 @@ public class OcrBlock
         {
             for (int j = i + 1; j < n; j++)
             {
-                if (ShouldMerge(lines[i].BoundingRect, lines[j].BoundingRect, medianPitch))
-                    Union(i, j);
+                if (!ShouldMerge(lines[i].BoundingRect, lines[j].BoundingRect, medianPitch)) continue;
+                var lower = lines[i].BoundingRect.Y <= lines[j].BoundingRect.Y ? lines[j] : lines[i];
+                var upper = lines[i].BoundingRect.Y <= lines[j].BoundingRect.Y ? lines[i] : lines[j];
+                if (IsNewParagraphStart(lower.FullText, upper.FullText)) continue;
+                // Prevent A+C merging over fence line B between them: block {A,C} would
+                // wrap around block {B} in Y-space, causing visible overlay overlap.
+                if (HasAlignedFenceBetween(upper, lower, lines)) continue;
+                Union(i, j);
             }
         }
 
@@ -153,6 +159,7 @@ public class OcrBlock
         // pairs always exceed mergeThreshold and can only merge transitively anyway.
         for (int i = 0; i < n - 1; i++)
         {
+            if (IsNewParagraphStart(sorted[i + 1].FullText, sorted[i].FullText)) continue;
             double gap = sorted[i + 1].BoundingRect.Y - (sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height);
             //Console.WriteLine($"Region line {i} Bottom Y = {sorted[i].BoundingRect.Y + sorted[i].BoundingRect.Height}, line {i + 1} top Y = {sorted[i + 1].BoundingRect.Y:F1}");
             //Console.WriteLine($"  → Gap between lines {i} and {i + 1}: {gap:F1}");
@@ -290,6 +297,41 @@ public class OcrBlock
     // neighbor directly below it, collect those gaps, take the median. Used as a data-driven
     // baseline instead of a fixed multiple of line height, which can be off for documents with
     // looser-than-default line spacing.
+    // True if any fence line lies strictly between upper and lower in Y and is
+    // horizontally aligned with both. Used to block A–C merges when fence B is between them.
+    private static bool HasAlignedFenceBetween(OcrLine upper, OcrLine lower, List<OcrLine> allLines)
+    {
+        double upperBottom = upper.BoundingRect.Y + upper.BoundingRect.Height;
+        double lowerTop = lower.BoundingRect.Y;
+        foreach (var k in allLines)
+        {
+            if (!IsNewParagraphStart(k.FullText)) continue;
+            double kY = k.BoundingRect.Y;
+            if (kY <= upperBottom || kY >= lowerTop) continue;
+            double lh1 = Math.Max(upper.BoundingRect.Height, k.BoundingRect.Height);
+            double hOverlap1 = Math.Min(upper.BoundingRect.Right, k.BoundingRect.Right) - Math.Max(upper.BoundingRect.Left, k.BoundingRect.Left);
+            if (hOverlap1 < -lh1 * 0.5) continue;
+            double lh2 = Math.Max(k.BoundingRect.Height, lower.BoundingRect.Height);
+            double hOverlap2 = Math.Min(k.BoundingRect.Right, lower.BoundingRect.Right) - Math.Max(k.BoundingRect.Left, lower.BoundingRect.Left);
+            if (hOverlap2 < -lh2 * 0.5) continue;
+            return true;
+        }
+        return false;
+    }
+
+    // previousText: the line directly above in Y order.
+    // Uppercase start only signals a new paragraph when the previous line ends with '.'
+    // (sentence boundary). Without context (fence detection), uppercase still acts as fence.
+    private static bool IsNewParagraphStart(string text, string? previousText = null)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        char first = text.TrimStart()[0];
+        if (first is '-' or '.' or '•' or '*' or '·') return true;
+        if (!char.IsUpper(first)) return false;
+        if (previousText is null) return true; // no context → keep old behaviour
+        return previousText.TrimEnd().EndsWith('.');
+    }
+
     private static double EstimateLinePitch(List<OcrLine> lines)
     {
         var gaps = new List<double>();
